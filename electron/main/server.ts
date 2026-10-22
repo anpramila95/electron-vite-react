@@ -73,17 +73,23 @@ export function startLocalServer(publicDir: string, defaultPort = 3210): Promise
         }
 
         try {
-          const upstream = await fetch(targetUrl, {
+          let upstream = await fetch(targetUrl, {
             headers: {
               'User-Agent':
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-              'Referer': 'https://www.tiktok.com/',
               'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
             },
           })
 
+          // Retry without headers if upstream returned 403 Forbidden
+          if (!upstream.ok && (upstream.status === 403 || upstream.status === 401)) {
+            upstream = await fetch(targetUrl)
+          }
+
           if (!upstream.ok) {
-            res.writeHead(upstream.status, {
+            // Fallback: 302 redirect directly to targetUrl so browser loads it directly
+            res.writeHead(302, {
+              Location: targetUrl,
               'Access-Control-Allow-Origin': '*',
             })
             res.end()
@@ -100,11 +106,12 @@ export function startLocalServer(publicDir: string, defaultPort = 3210): Promise
           const arrayBuffer = await upstream.arrayBuffer()
           res.end(Buffer.from(arrayBuffer))
         } catch (err: any) {
-          res.writeHead(500, {
-            'Content-Type': 'application/json',
+          // Fallback on network error: redirect to image directly
+          res.writeHead(302, {
+            Location: targetUrl,
             'Access-Control-Allow-Origin': '*',
           })
-          res.end(JSON.stringify({ error: err.message }))
+          res.end()
         }
         return
       }

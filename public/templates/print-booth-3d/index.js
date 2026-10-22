@@ -1760,12 +1760,7 @@ function drawVipStamp(g, x, y) {
 }
 
 function showVipNotice() {
-  const toast = el("vip-toast");
-  if (!toast) return;
-  toast.classList.add("show");
-  setTimeout(function () {
-    toast.classList.remove("show");
-  }, 2200);
+  // Tat popup "Da dong dau VIP" theo yeu cau
 }
 
 function makeRealPhotoCard(cx, cy, R, person, theme, opt) {
@@ -1810,6 +1805,7 @@ function makeRealPhotoCard(cx, cy, R, person, theme, opt) {
   const rawName = person.name || "Khán giả";
   const name = rawName.length > 18 ? rawName.slice(0, 16) + "…" : rawName;
   const maxTextW = cardW * 0.82;
+  const photoUrl = person.photoUrl || "";
 
   // 1. Khung the nen
   S.push({
@@ -1915,15 +1911,22 @@ function makeRealPhotoCard(cx, cy, R, person, theme, opt) {
   return S;
 }
 
+function hasVipInQueue() {
+  return userQueue.some(function (u) {
+    return !!u.isVip;
+  });
+}
+
 function popFromQueue(isVip) {
   if (userQueue.length === 0) {
     return null; // Khong dung mock - tra ve null khi khong co ai
   }
   if (isVip) {
     const vIdx = userQueue.findIndex(function (u) {
-      return u.isVip;
+      return !!u.isVip;
     });
     if (vIdx !== -1) return userQueue.splice(vIdx, 1)[0];
+    return null; // Không lấy người thường để in 1 ảnh VIP lớn
   }
   return userQueue.shift();
 }
@@ -1933,16 +1936,21 @@ function buildBatch(sheet, batch) {
   sheet.strokes = [];
   sheet.batch = batch;
 
+  // Nếu sheet được gán mode full nhưng hàng chờ không có VIP thì chuyển về in lưới thường
+  if (sheet.mode === "full" && !hasVipInQueue()) {
+    sheet.mode = "grid";
+  }
+
   if (sheet.mode === "full") {
-    const R = CH * 0.42;
+    const R = CH * 0.33; // Avatar nho hon mot chut de can doi va co cho de ten
     const cx = CW / 2,
-      cy = CH * 0.475;
+      cy = CH * 0.53;
     const person = popFromQueue(true);
     const st = makeRealPhotoCard(cx, cy, R, person, theme, {
       cardW: CW * 0.94,
       cardH: CH * 0.91,
-      nameDy: 1.18 * R,
-      nameSize: R * 0.2,
+      nameDy: -1.26 * R, // Ten dat o tren avatar
+      nameSize: R * 0.22,
     });
     fullDecor(st, theme);
     const stampX = CW - 240,
@@ -1955,8 +1963,15 @@ function buildBatch(sheet, batch) {
       stampY: stampY,
       color: "#dc2626",
     });
+    if (st.length > 0) {
+      st[0].firstOfSlot = true;
+    }
     st.forEach(function (s) {
       s.slot = 0;
+      if (person && person.id) {
+        s.userId = person.id;
+        s.person = person;
+      }
     });
     st[st.length - 1].lastOfSlot = true;
     sheet.strokes.push.apply(sheet.strokes, st);
@@ -1982,11 +1997,18 @@ function buildBatch(sheet, batch) {
           nameDy: 1.34 * R,
           nameSize: R * 0.25,
         });
+        if (st.length > 0) {
+          st[0].firstOfSlot = true;
+        }
         st.forEach(function (s) {
           s.slot = i;
           s.cx = cx;
           s.cy = cy;
           s.r = R;
+          if (person && person.id) {
+            s.userId = person.id;
+            s.person = person;
+          }
           if (person && person.photoUrl) s.photoUrl = person.photoUrl;
         });
         st[st.length - 1].lastOfSlot = true;
@@ -2199,6 +2221,13 @@ function finalize(sheet, s) {
       sheet.mode === "full" ? 70 + state.batch * 4 : 10 + state.batch * 2;
     markSlot(s.slot);
     updateHUD();
+
+    if (s.userId && typeof window.sendLiveSocket === "function") {
+      window.sendLiveSocket({
+        type: "USER_PRINTED",
+        userId: s.userId,
+      });
+    }
   }
   sheet.dirty = true;
 }
@@ -2219,6 +2248,20 @@ function advance(sheet, budget) {
 
     if (!s.opened) {
       s.opened = true;
+      if (s.firstOfSlot && s.person && typeof window.sendLiveSocket === "function") {
+        window.sendLiveSocket({
+          type: "USER_PRINTING",
+          user: {
+            id: s.person.id,
+            name: s.person.name,
+            photoUrl: s.person.photoUrl,
+            isVip: !!s.person.isVip,
+            comment: s.person.comment,
+            source: s.person.source,
+            giftName: s.person.giftName,
+          },
+        });
+      }
       if (s.clipStart && s.clip) {
         sheet.ctx.save();
         sheet.ctx.beginPath();
@@ -2332,7 +2375,7 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 1.2, 0.3);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
-controls.zoomSpeed = 0.22;
+controls.zoomSpeed = 0.05;
 controls.minDistance = 3.2;
 controls.maxDistance = 22;
 controls.maxPolarAngle = 1.47;
@@ -2915,12 +2958,22 @@ el("btn-rotate").addEventListener("click", function () {
   controls.autoRotateSpeed = 0.55;
   el("btn-rotate").classList.toggle("on", controls.autoRotate);
 });
-function triggerVipNow() {
+function triggerVipNow(vipUser) {
   state.rare = true;
   const rBtn = el("btn-rare");
   if (rBtn) {
     rBtn.classList.add("on");
     rBtn.textContent = "Ảnh lớn hiếm";
+  }
+  if (vipUser && vipUser.name) {
+    userQueue.unshift({
+      id: vipUser.id || nextUserId++,
+      name: vipUser.name,
+      photoUrl: vipUser.photoUrl || "",
+      isVip: true,
+      priority: 999,
+      addedAt: Date.now(),
+    });
   }
   active.mode = "full";
   active.clear();
@@ -2930,7 +2983,6 @@ function triggerVipNow() {
   buildBatch(active, state.batch);
   glowClear();
   updateHUD();
-  showVipNotice();
   toastKey("👑 KÍCH HOẠT: <b>IN 1 ẢNH LỚN VIP NGAY LẬP TỨC</b>");
 }
 
@@ -2942,7 +2994,7 @@ function setRareMode(enable) {
     rBtn.textContent = state.rare ? "Ảnh lớn hiếm" : "In bình thường";
   }
   if (!flow.active) {
-    active.mode = state.rare ? "full" : "grid";
+    active.mode = nextMode();
     active.clear();
     active.setFeed(0);
     buildBatch(active, state.batch);
@@ -3231,6 +3283,9 @@ function addUserToQueue(isVip, userObj) {
   if (isVip) {
     userQueue.unshift(person);
     toastKey("👑 Đã thêm VIP <b>" + name + "</b> (Ưu tiên số 1)");
+    if (state.rare && queued) {
+      queued.mode = "full";
+    }
   } else {
     userQueue.push(person);
     toastKey("👤 Đã thêm <b>" + name + "</b> vào hàng chờ");
@@ -3276,7 +3331,10 @@ function paperToWorld(px, py, sheet) {
 }
 
 function nextMode() {
-  return state.rare ? "full" : "grid";
+  if (state.rare && hasVipInQueue()) {
+    return "full";
+  }
+  return "grid";
 }
 
 function startFlow() {
@@ -3467,6 +3525,13 @@ setTimeout(function () {
     }
 
     ws.onopen = function () {
+      window.sendLiveSocket = function (data) {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          const payload = typeof data === "string" ? JSON.parse(data) : { ...data };
+          payload.streamKey = streamKey;
+          ws.send(JSON.stringify(payload));
+        }
+      };
       retryDelay = 1500; // reset backoff
       ws.send(JSON.stringify({ type: "SUBSCRIBE", key: streamKey }));
 
@@ -3543,6 +3608,12 @@ setTimeout(function () {
     } else if (msg.type === "CLEAR_QUEUE") {
       userQueue.length = 0;
       updateHUD();
+    } else if (msg.type === "SET_QUEUE" && Array.isArray(msg.queue)) {
+      if (userQueue.length === 0) {
+        msg.queue.forEach(function (user) {
+          addUserToQueue(user.isVip, user);
+        });
+      }
     } else if (msg.type === "ACTION") {
       handleAction(msg.action, msg.value);
     }
@@ -3637,7 +3708,7 @@ setTimeout(function () {
         toastKey("Lệnh: <b>IN LẠI MẺ TỪ ĐẦU</b>");
         break;
       case "vip":
-        triggerVipNow();
+        triggerVipNow(val);
         break;
       case "view":
         if (val) flyTo(val);

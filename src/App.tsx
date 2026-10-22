@@ -87,6 +87,7 @@ interface SessionData {
   totalViewers: number
   queueCount: number
   queue: QueueItem[]
+  printingUsers?: any[]
   logs: ActivityLog[]
   settings: Record<string, any>
   tiktokConfig: TikTokConfig
@@ -109,6 +110,7 @@ function VirtualQueueList({
   getSourceBadge: (item: QueueItem) => React.ReactNode
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const rafRef = useRef<number | null>(null)
   const [scrollTop, setScrollTop] = useState(0)
   const [viewportHeight, setViewportHeight] = useState(480)
 
@@ -144,10 +146,19 @@ function VirtualQueueList({
   const visibleItems = items.slice(startIndex, endIndex)
   const offsetY = startIndex * QUEUE_ITEM_HEIGHT
 
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const top = e.currentTarget.scrollTop
+    if (rafRef.current !== null) return
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null
+      setScrollTop(top)
+    })
+  }
+
   return (
     <div
       ref={containerRef}
-      onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+      onScroll={handleScroll}
       className='flex-1 overflow-y-auto dark-scroll relative pr-1'
     >
       <div style={{ height: totalHeight, width: '100%', position: 'relative' }}>
@@ -259,6 +270,7 @@ export default function App() {
   const [copyToast, setCopyToast] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [logFilter, setLogFilter] = useState<'all' | 'chat' | 'gift' | 'member'>('all')
+  const [queueTab, setQueueTab] = useState<'waiting' | 'running'>('waiting')
   const [previewClientCounts, setPreviewClientCounts] = useState<Record<string, number>>({})
   const [actionNotice, setActionNotice] = useState<{ text: string; isError?: boolean } | null>(null)
 
@@ -306,8 +318,8 @@ export default function App() {
     if (!window.ipcRenderer) return
     const list: SessionData[] = await window.ipcRenderer.invoke('sessions:get-all')
     setSessions(list || [])
-    if (list && list.length > 0 && !currentSessionId) {
-      setCurrentSessionId(list[0].id)
+    if (list && list.length > 0) {
+      setCurrentSessionId((prev) => prev || list[0].id)
     }
   }
 
@@ -332,47 +344,93 @@ export default function App() {
       if (counts) setPreviewClientCounts(counts)
     }
 
-    const handleSessionEvent = (_: any, { event, data }: { event: string; data: any }) => {
-      setSessions((prevSessions) =>
-        prevSessions.map((s) => {
-          if (s.streamKey !== data?.sessionKey) return s
+    const pendingEvents: { event: string; data: any }[] = []
+    let flushTimer: NodeJS.Timeout | null = null
 
-          if (event === 'status') {
-            return {
-              ...s,
-              ...data.status,
+    const flushEvents = () => {
+      if (pendingEvents.length === 0) return
+      const batch = pendingEvents.splice(0, pendingEvents.length)
+
+      setSessions((prevSessions) => {
+        let updated = [...prevSessions]
+        for (const { event, data } of batch) {
+          updated = updated.map((s) => {
+            if (s.streamKey !== data?.sessionKey) return s
+
+            if (event === 'status') {
+              return {
+                ...s,
+                ...data.status,
+              }
+            } else if (event === 'stats') {
+              return {
+                ...s,
+                viewerCount: data.viewerCount ?? s.viewerCount,
+                likeCount: data.likeCount ?? s.likeCount,
+              }
+            } else if (event === 'queue') {
+              return {
+                ...s,
+                queue: data.queue || [],
+                queueCount: (data.queue || []).length,
+              }
+            } else if (event === 'log') {
+              const currentLogs = s.logs || []
+              if (currentLogs.some((l) => l.id === data.log?.id)) {
+                return s
+              }
+              const newLogs = [data.log, ...currentLogs]
+              newLogs.sort((a, b) => (b.created_at || 0) - (a.created_at || 0))
+              return {
+                ...s,
+                logs: newLogs.slice(0, 100),
+              }
+            } else if (event === 'user_printing') {
+              const currentPrinting = s.printingUsers || []
+              const exists = currentPrinting.some((u: any) => u.id === data.user?.id)
+              return {
+                ...s,
+                printingUsers: exists ? currentPrinting : [data.user, ...currentPrinting],
+              }
+            } else if (event === 'user_printed' || event === 'user_removed') {
+              const currentPrinting = s.printingUsers || []
+              const targetId = data.userId ?? data.id
+              return {
+                ...s,
+                printingUsers: currentPrinting.filter((u: any) => u.id !== targetId),
+              }
+            } else if (event === 'queue_cleared') {
+              return {
+                ...s,
+                printingUsers: [],
+              }
             }
-          } else if (event === 'stats') {
-            return {
-              ...s,
-              viewerCount: data.viewerCount ?? s.viewerCount,
-              likeCount: data.likeCount ?? s.likeCount,
-            }
-          } else if (event === 'queue') {
-            return {
-              ...s,
-              queue: data.queue || [],
-              queueCount: (data.queue || []).length,
-            }
-          } else if (event === 'log') {
-            return {
-              ...s,
-              logs: [data.log, ...(s.logs || []).slice(0, 99)],
-            }
-          }
-          return s
-        }),
-      )
+            return s
+          })
+        }
+        return updated
+      })
+    }
+
+    const handleSessionEvent = (_: any, item: { event: string; data: any }) => {
+      pendingEvents.push(item)
+      if (!flushTimer) {
+        flushTimer = setTimeout(() => {
+          flushTimer = null
+          flushEvents()
+        }, 150)
+      }
     }
 
     window.ipcRenderer.on('session:event', handleSessionEvent)
     window.ipcRenderer.on('preview:clients-change', handleClientsChange)
 
     return () => {
+      if (flushTimer) clearTimeout(flushTimer)
       window.ipcRenderer?.off('session:event', handleSessionEvent)
       window.ipcRenderer?.off('preview:clients-change', handleClientsChange)
     }
-  }, [currentSessionId])
+  }, [])
 
   const getTemplate = (id?: string) => {
     return (
@@ -541,6 +599,7 @@ export default function App() {
       if (logFilter === 'all') return true
       return log.type === logFilter
     })
+    .sort((a, b) => (b.created_at || 0) - (a.created_at || 0))
     .slice(0, 100)
 
   const getSourceBadge = (item: QueueItem) => {
@@ -1054,7 +1113,21 @@ export default function App() {
                         .map((act) => (
                           <button
                             key={act.id}
-                            onClick={() => sendAction(act.actionKey, act.payload, act.label)}
+                            onClick={() => {
+                              if (act.actionKey === 'vip') {
+                                const topPerson = currentSession.queue[0]
+                                  ? {
+                                      id: currentSession.queue[0].id,
+                                      name: currentSession.queue[0].name,
+                                      photoUrl: currentSession.queue[0].photo_url || '',
+                                      isVip: true,
+                                    }
+                                  : null
+                                sendAction(act.actionKey, topPerson, act.label)
+                              } else {
+                                sendAction(act.actionKey, act.payload, act.label)
+                              }
+                            }}
                             className='w-full rounded-xl py-2.5 text-xs font-black transition flex items-center justify-center gap-1.5 bg-linear-to-r from-red-600 to-rose-600 text-white hover:brightness-110 shadow-lg shadow-red-600/25 active:scale-[0.98] cursor-pointer'
                           >
                             {act.icon && <span>{act.icon}</span>}
@@ -1298,9 +1371,14 @@ export default function App() {
                       <button
                         onClick={handleStartLive}
                         disabled={isSubmitting}
-                        className='rounded-xl bg-cyan-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-cyan-500 shrink-0 shadow-sm'
+                        title={
+                          isLiveConnected
+                            ? 'Dữ liệu đang tự động nhận realtime 24/7! Chỉ bấm nút này khi bạn muốn đổi sang kênh TikTok khác.'
+                            : 'Bắt đầu kết nối với kênh TikTok này'
+                        }
+                        className='rounded-xl bg-cyan-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-cyan-500 shrink-0 shadow-sm cursor-pointer'
                       >
-                        {isLiveConnected ? 'Đồng bộ 🔄' : 'Kết nối ngay ⚡'}
+                        {isLiveConnected ? 'Đổi kênh 🔁' : 'Kết nối ngay ⚡'}
                       </button>
                     </div>
                   </div>
@@ -1411,16 +1489,60 @@ export default function App() {
               <div className='flex flex-col gap-3 lg:col-span-5 lg:overflow-hidden'>
                 <div className='flex flex-1 flex-col rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-md overflow-hidden'>
                   <div className='mb-3 flex items-center justify-between border-b border-slate-800 pb-2.5'>
-                    <div>
-                      <h3 className='text-xs font-bold uppercase tracking-wider text-slate-300'>
-                        👥 Hàng Chờ Tương Tác ({currentSession.queueCount})
-                      </h3>
-                      <p className='text-[10px] text-slate-400'>
-                        Sắp xếp theo thứ tự: Quà lớn (VIP) → Quà nhỏ → Bình luận → Tham gia
-                      </p>
+                    {/* 2 Tab: Hàng chờ (mặc định) & Đang chạy */}
+                    <div className='flex items-center gap-1.5'>
+                      <button
+                        type='button'
+                        onClick={() => setQueueTab('waiting')}
+                        className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-bold transition ${
+                          queueTab === 'waiting'
+                            ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm'
+                            : 'text-slate-400 hover:text-white bg-slate-950/60 border border-slate-800/80'
+                        }`}
+                      >
+                        <span>👥 Hàng chờ</span>
+                        <span
+                          className={`rounded-full px-1.5 py-0.2 text-[10px] ${
+                            queueTab === 'waiting'
+                              ? 'bg-cyan-500 text-slate-950 font-black'
+                              : 'bg-slate-800 text-slate-300'
+                          }`}
+                        >
+                          {currentSession.queueCount}
+                        </span>
+                      </button>
+
+                      <button
+                        type='button'
+                        onClick={() => setQueueTab('running')}
+                        className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-bold transition relative ${
+                          queueTab === 'running'
+                            ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm'
+                            : 'text-slate-400 hover:text-white bg-slate-950/60 border border-slate-800/80'
+                        }`}
+                      >
+                        <span className='flex items-center gap-1'>
+                          {(currentSession.printingUsers || []).length > 0 && (
+                            <span className='relative flex h-2 w-2'>
+                              <span className='animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75'></span>
+                              <span className='relative inline-flex rounded-full h-2 w-2 bg-amber-500'></span>
+                            </span>
+                          )}
+                          ⚡ Đang chạy
+                        </span>
+                        <span
+                          className={`rounded-full px-1.5 py-0.2 text-[10px] ${
+                            queueTab === 'running'
+                              ? 'bg-amber-500 text-slate-950 font-black'
+                              : 'bg-slate-800 text-slate-300'
+                          }`}
+                        >
+                          {(currentSession.printingUsers || []).length}
+                        </span>
+                      </button>
                     </div>
 
-                    {currentSession.queueCount > 0 && (
+                    {queueTab === 'waiting' && currentSession.queueCount > 0 && (
                       <button
                         onClick={() =>
                           window.ipcRenderer?.invoke('queue:clear', { sessionId: currentSession.id })
@@ -1432,40 +1554,115 @@ export default function App() {
                     )}
                   </div>
 
-                  {/* Form thêm thủ công */}
-                  <form onSubmit={handleManualAdd} className='mb-3 flex gap-2'>
-                    <input
-                      type='text'
-                      value={manualName}
-                      onChange={(e) => setManualName(e.target.value)}
-                      placeholder='Tên khán giả test...'
-                      className='flex-1 rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 text-xs text-white focus:border-cyan-500 focus:outline-none'
-                    />
-                    <button
-                      type='button'
-                      onClick={() => setManualIsVip(!manualIsVip)}
-                      className={`rounded-lg px-2.5 py-1.5 text-xs font-bold border transition ${
-                        manualIsVip
-                          ? 'border-amber-400 bg-amber-500/20 text-amber-300'
-                          : 'border-slate-800 bg-slate-950 text-slate-400'
-                      }`}
-                    >
-                      {manualIsVip ? '★ VIP' : 'Thường'}
-                    </button>
-                    <button
-                      type='submit'
-                      className='rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-cyan-500'
-                    >
-                      + Thêm
-                    </button>
-                  </form>
+                  {queueTab === 'waiting' ? (
+                    <>
+                      {/* Form thêm thủ công */}
+                      <form onSubmit={handleManualAdd} className='mb-3 flex gap-2'>
+                        <input
+                          type='text'
+                          value={manualName}
+                          onChange={(e) => setManualName(e.target.value)}
+                          placeholder='Tên khán giả test...'
+                          className='flex-1 rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 text-xs text-white focus:border-cyan-500 focus:outline-none'
+                        />
+                        <button
+                          type='button'
+                          onClick={() => setManualIsVip(!manualIsVip)}
+                          className={`rounded-lg px-2.5 py-1.5 text-xs font-bold border transition ${
+                            manualIsVip
+                              ? 'border-amber-400 bg-amber-500/20 text-amber-300'
+                              : 'border-slate-800 bg-slate-950 text-slate-400'
+                          }`}
+                        >
+                          {manualIsVip ? '★ VIP' : 'Thường'}
+                        </button>
+                        <button
+                          type='submit'
+                          className='rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-cyan-500'
+                        >
+                          + Thêm
+                        </button>
+                      </form>
 
-                  {/* Virtualized Queue List */}
-                  <VirtualQueueList
-                    items={currentSession.queue}
-                    sessionId={currentSession.id}
-                    getSourceBadge={getSourceBadge}
-                  />
+                      {/* Virtualized Queue List */}
+                      <VirtualQueueList
+                        items={currentSession.queue}
+                        sessionId={currentSession.id}
+                        getSourceBadge={getSourceBadge}
+                      />
+                    </>
+                  ) : (
+                    /* Tab 2: Danh sách đang chạy (đang vẽ) */
+                    <div className='flex-1 overflow-y-auto dark-scroll space-y-2 pr-1'>
+                      {(currentSession.printingUsers || []).length === 0 ? (
+                        <div className='flex h-64 flex-col items-center justify-center text-center text-slate-500'>
+                          <span className='text-3xl mb-2'>🖨️</span>
+                          <p className='text-xs font-medium text-slate-300 mb-1'>
+                            Chưa có lượt in nào đang chạy
+                          </p>
+                          <p className='text-[11px] text-slate-500 max-w-xs'>
+                            Khi máy in bắt đầu vẽ khán giả, thông tin sẽ hiển thị tại đây. Sau khi vẽ xong sẽ tự động xóa ngay.
+                          </p>
+                        </div>
+                      ) : (
+                        (currentSession.printingUsers || []).map((user: any) => (
+                          <div
+                            key={user.id}
+                            className='flex items-center gap-3 rounded-xl border border-amber-500/40 bg-gradient-to-r from-amber-500/10 via-slate-900 to-slate-950 p-3 shadow-md'
+                          >
+                            <div className='relative h-11 w-11 shrink-0 overflow-hidden rounded-full border-2 border-amber-400 bg-slate-800 shadow-sm'>
+                              {user.photoUrl ? (
+                                <img
+                                  src={user.photoUrl}
+                                  alt={user.name}
+                                  className='h-full w-full object-cover'
+                                  onError={(e) => {
+                                    ;(e.target as HTMLElement).style.display = 'none'
+                                  }}
+                                />
+                              ) : (
+                                <div className='flex h-full w-full items-center justify-center text-sm font-bold text-slate-300'>
+                                  {user.name?.charAt(0) || '👤'}
+                                </div>
+                              )}
+                              <div className='absolute bottom-0 right-0 h-3 w-3 rounded-full bg-emerald-500 border border-slate-900' />
+                            </div>
+
+                            <div className='min-w-0 flex-1'>
+                              <div className='flex items-center gap-1.5'>
+                                <span className='truncate text-xs font-bold text-white'>
+                                  {user.name}
+                                </span>
+                                {user.isVip ? (
+                                  <span className='rounded bg-amber-500/20 px-1 py-0.2 text-[9px] font-bold text-amber-300 border border-amber-500/40'>
+                                    👑 VIP
+                                  </span>
+                                ) : (
+                                  <span className='rounded bg-cyan-500/20 px-1 py-0.2 text-[9px] font-bold text-cyan-300 border border-cyan-500/40'>
+                                    {user.source === 'gift' ? '🎁 QUÀ' : '💬 CHAT'}
+                                  </span>
+                                )}
+                              </div>
+                              <div className='mt-1 flex items-center gap-2 text-[11px] text-amber-300'>
+                                <span className='flex items-center gap-1 font-semibold'>
+                                  <span className='relative flex h-2 w-2'>
+                                    <span className='animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75'></span>
+                                    <span className='relative inline-flex rounded-full h-2 w-2 bg-amber-500'></span>
+                                  </span>
+                                  ⚡ Đang vẽ trên máy in...
+                                </span>
+                                {user.comment && (
+                                  <span className='truncate text-[10px] text-slate-400 italic'>
+                                    "{user.comment}"
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 

@@ -204,15 +204,34 @@ class AppDatabase {
     return Number(result.lastInsertRowid)
   }
 
+  public getQueueItem(id: number): DbQueueItem | undefined {
+    if (!this.db) return undefined
+    const stmt = this.db.prepare('SELECT * FROM queue_items WHERE id = ?')
+    return stmt.get(id) as unknown as DbQueueItem | undefined
+  }
+
   public removeQueueItem(id: number) {
     if (!this.db) return
     const stmt = this.db.prepare('DELETE FROM queue_items WHERE id = ?')
     stmt.run(id)
   }
 
+  public removeQueueItemsByUser(sessionId: string, id: number) {
+    if (!this.db) return
+    const item = this.getQueueItem(id)
+    if (item && item.unique_id) {
+      // Xoa user nay va tat ca cac ban sao trung lap cua user de nhuong cho nguoi khac
+      const stmt = this.db.prepare('DELETE FROM queue_items WHERE session_id = ? AND unique_id = ?')
+      stmt.run(sessionId, item.unique_id)
+    } else {
+      const stmt = this.db.prepare('DELETE FROM queue_items WHERE id = ?')
+      stmt.run(id)
+    }
+  }
+
   public prioritizeVip(id: number) {
     if (!this.db) return
-    const stmt = this.db.prepare('UPDATE queue_items SET is_vip = 1 WHERE id = ?')
+    const stmt = this.db.prepare('UPDATE queue_items SET is_vip = 1, priority = 9999 WHERE id = ?')
     stmt.run(id)
   }
 

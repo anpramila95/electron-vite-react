@@ -39,11 +39,27 @@ export interface TikTokConfig {
 
 const getBestAvatar = (user: any): string => {
   if (!user) return ''
+  if (typeof user === 'string' && user.startsWith('http')) return user
+
+  const directUrl =
+    user.profilePictureUrl ||
+    user.avatarUrl ||
+    user.avatar ||
+    user.picture ||
+    user.avatarThumbUrl ||
+    ''
+
+  if (typeof directUrl === 'string' && directUrl.startsWith('http')) {
+    return directUrl
+  }
+
   return (
     user.avatarLarge?.urlList?.[0] ||
     user.avatarMedium?.urlList?.[0] ||
     user.avatarThumb?.urlList?.[0] ||
-    user.profilePictureUrl ||
+    (Array.isArray(user.avatarThumb) ? user.avatarThumb[0] : '') ||
+    user.profilePictureUrls?.[0] ||
+    user.avatar?.urlList?.[0] ||
     ''
   )
 }
@@ -68,7 +84,39 @@ export class LiveSessionInstance {
   private shouldRun = false
   private retryTimer: any = null
   private retryCount = 0
-  private readonly maxRetryDelay = 30000
+  private readonly maxRetryDelay = 15000 // Max 15 seconds
+  private lastMessageTime = Date.now()
+  private watchdogTimer: NodeJS.Timeout | null = null
+
+  private startWatchdog() {
+    this.stopWatchdog()
+    this.lastMessageTime = Date.now()
+    this.watchdogTimer = setInterval(() => {
+      if (!this.shouldRun) {
+        this.stopWatchdog()
+        return
+      }
+      // If 30s passed without any message from TikTok -> dead/frozen socket
+      if (Date.now() - this.lastMessageTime > 30000) {
+        this.addLog(
+          'system',
+          'Tự phục hồi kết nối 24/7',
+          'Quá 30s không nhận được tín hiệu từ TikTok. Đang tự động kết nối lại ngay...',
+        )
+        this.isConnected = false
+        this.broadcastStatus()
+        this.stopWatchdog()
+        this.scheduleRetry('TikTok socket bị đóng băng')
+      }
+    }, 10000)
+  }
+
+  private stopWatchdog() {
+    if (this.watchdogTimer) {
+      clearInterval(this.watchdogTimer)
+      this.watchdogTimer = null
+    }
+  }
 
   constructor(
     record: SessionRecord,
@@ -207,6 +255,7 @@ export class LiveSessionInstance {
 
       // 1. CHAT (Bình luận thật từ khán giả)
       this.connection.on(WebcastEvent.CHAT, (data: any) => {
+        this.lastMessageTime = Date.now()
         if (!this.isConnected) {
           this.isConnected = true
           this.broadcastStatus()
@@ -246,7 +295,9 @@ export class LiveSessionInstance {
       })
 
       // 2. GIFT (Quà tặng thật)
+      // 2. GIFT (Quà tặng từ khán giả)
       this.connection.on(WebcastEvent.GIFT, (data: any) => {
+        this.lastMessageTime = Date.now()
         if (!this.isConnected) {
           this.isConnected = true
           this.broadcastStatus()
@@ -273,7 +324,8 @@ export class LiveSessionInstance {
 
         if (this.tiktokConfig.onGift) {
           const isBigGift = diamonds >= (this.tiktokConfig.bigGiftThreshold || 10)
-          const priority = isBigGift ? 100 : 60 // Quà lớn = 100 (#1 VIP), Quà nhỏ = 60
+          // Quà càng lớn priority càng cao vượt trội để lập tức lên #1 hàng chờ
+          const priority = isBigGift ? 10000 + diamonds : 2000 + diamonds
 
           this.addToQueue({
             uniqueId,
@@ -289,6 +341,7 @@ export class LiveSessionInstance {
 
       // 3. MEMBER (Khán giả tham gia phòng live)
       this.connection.on(WebcastEvent.MEMBER, (data: any) => {
+        this.lastMessageTime = Date.now()
         if (!this.isConnected) {
           this.isConnected = true
           this.broadcastStatus()
@@ -315,32 +368,33 @@ export class LiveSessionInstance {
 
       // 4. ROOM_USER (Mắt xem thật)
       this.connection.on(WebcastEvent.ROOM_USER, (data: any) => {
+        this.lastMessageTime = Date.now()
         if (!this.isConnected) {
           this.isConnected = true
           this.broadcastStatus()
         }
 
-        if (typeof data.total === 'number') {
-          this.viewerCount = data.total
-        } else if (typeof data.viewerCount === 'number') {
-          this.viewerCount = data.viewerCount
-        }
-        if (typeof data.totalUser === 'number') {
-          this.totalViewers = data.totalUser
+        const total = Number(data.totalUser ?? data.total ?? data.viewerCount ?? data.total_user)
+        if (!Number.isNaN(total) && total >= 0) {
+          this.viewerCount = total
+          this.totalViewers = total
         }
         this.broadcastStats()
       })
 
       // 5. LIKE (Thả tim)
       this.connection.on(WebcastEvent.LIKE, (data: any) => {
+        this.lastMessageTime = Date.now()
         const nickname = data.user?.nickname || data.user?.displayId || 'Khán giả'
         const uniqueId = data.user?.displayId || data.user?.id || ''
         const avatar = getBestAvatar(data.user)
 
-        if (typeof data.totalLikeCount === 'number') {
-          this.likeCount = data.totalLikeCount
-        } else if (typeof data.likeCount === 'number') {
-          this.likeCount += data.likeCount
+        const totalLike = Number(data.total ?? data.totalLikeCount)
+        const likeAdd = Number(data.count ?? data.likeCount ?? 1)
+        if (!Number.isNaN(totalLike) && totalLike > 0) {
+          this.likeCount = totalLike
+        } else if (!Number.isNaN(likeAdd) && likeAdd > 0) {
+          this.likeCount += likeAdd
         }
         this.broadcastStats()
 
@@ -359,6 +413,7 @@ export class LiveSessionInstance {
 
       // 6. SOCIAL (Follow / Chia sẻ)
       this.connection.on(WebcastEvent.SOCIAL, (data: any) => {
+        this.lastMessageTime = Date.now()
         const nickname = data.user?.nickname || data.user?.displayId || 'Khán giả'
         const uniqueId = data.user?.displayId || data.user?.id || ''
         const avatar = getBestAvatar(data.user)
@@ -380,37 +435,54 @@ export class LiveSessionInstance {
         }
       })
 
+      // Heartbeat packets to keep watchdog alive
+      this.connection.on('websocketData', () => {
+        this.lastMessageTime = Date.now()
+      })
+      this.connection.on('rawData', () => {
+        this.lastMessageTime = Date.now()
+      })
+
       // 7. DISCONNECTED -> Auto 24/7 Retry
       this.connection.on('disconnected', () => {
         this.isConnected = false
+        this.stopWatchdog()
         this.broadcastStatus()
         if (this.shouldRun) {
-          this.scheduleRetry('TikTok đã ngắt kết nối. Đang tự động kết nối lại...')
+          this.scheduleRetry('TikTok đã ngắt kết nối. Đang tự động kết nối lại 24/7...')
         }
       })
 
-      // 8. STREAM_END -> Auto 24/7 Retry
+      // 8. STREAM_END
       this.connection.on(WebcastEvent.STREAM_END, () => {
         this.isConnected = false
+        this.stopWatchdog()
         this.broadcastStatus()
         if (this.shouldRun) {
           this.scheduleRetry('Phiên Live tạm ngưng. Sẽ tự động kết nối lại khi mở lại live...')
         }
       })
 
-      // 9. ERROR -> Auto Retry
+      // 9. ERROR
       this.connection.on('error', (err: any) => {
         const msg = err?.message || (typeof err === 'object' ? JSON.stringify(err) : String(err))
         this.addLog('system', 'Lỗi', `Sự cố mạng: ${msg}`)
         if (this.shouldRun && !this.isConnected) {
+          this.stopWatchdog()
           this.scheduleRetry('Lỗi socket. Đang tự động kết nối lại...')
         }
       })
 
-      // Connect
-      const state = await this.connection.connect()
+      // Connect with 15-second timeout safeguard to prevent hanging
+      const connectPromise = this.connection.connect()
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Hết thời gian chờ kết nối TikTok (15s timeout)')), 15000),
+      )
+      const state: any = await Promise.race([connectPromise, timeoutPromise])
+
       this.isConnected = true
       this.retryCount = 0
+      this.startWatchdog()
       this.addLog(
         'system',
         'TikTok Live',
@@ -452,6 +524,7 @@ export class LiveSessionInstance {
   }
 
   private cleanupConnection() {
+    this.stopWatchdog()
     if (this.retryTimer) {
       clearTimeout(this.retryTimer)
       this.retryTimer = null
@@ -524,8 +597,7 @@ export class LiveSessionInstance {
       created_at: Date.now(),
     })
 
-    const fullQueue = this.getQueue()
-    this.onBroadcast('queue', { sessionKey: this.streamKey, queue: fullQueue })
+    this.scheduleQueueBroadcast()
     this.onBroadcast('user_added', {
       sessionKey: this.streamKey,
       user: {
@@ -538,8 +610,18 @@ export class LiveSessionInstance {
     })
   }
 
+  private queueBroadcastTimer: NodeJS.Timeout | null = null
+  private scheduleQueueBroadcast() {
+    if (this.queueBroadcastTimer) return
+    this.queueBroadcastTimer = setTimeout(() => {
+      this.queueBroadcastTimer = null
+      const fullQueue = this.getQueue()
+      this.onBroadcast('queue', { sessionKey: this.streamKey, queue: fullQueue })
+    }, 250)
+  }
+
   public removeFromQueue(id: number) {
-    db.removeQueueItem(id)
+    db.removeQueueItemsByUser(this.id, id)
     const fullQueue = this.getQueue()
     this.onBroadcast('queue', { sessionKey: this.streamKey, queue: fullQueue })
     this.onBroadcast('user_removed', { sessionKey: this.streamKey, id })
@@ -657,12 +739,17 @@ export class LiveSessionInstance {
     })
   }
 
+  private statsTimer: NodeJS.Timeout | null = null
   private broadcastStats() {
-    this.onBroadcast('stats', {
-      sessionKey: this.streamKey,
-      viewerCount: this.viewerCount,
-      likeCount: this.likeCount,
-    })
+    if (this.statsTimer) return
+    this.statsTimer = setTimeout(() => {
+      this.statsTimer = null
+      this.onBroadcast('stats', {
+        sessionKey: this.streamKey,
+        viewerCount: this.viewerCount,
+        likeCount: this.likeCount,
+      })
+    }, 800)
   }
 }
 
@@ -721,6 +808,12 @@ export class TikTokManager {
       for (const rec of list) {
         const instance = new LiveSessionInstance(rec, this.onBroadcast)
         this.sessions.set(rec.id, instance)
+        // Auto-reconnect previously running sessions 24/7 on app startup
+        if (rec.status === 'running' && rec.username) {
+          setTimeout(() => {
+            instance.start().catch((err) => console.error('[AutoConnect Startup] Error:', err))
+          }, 1500)
+        }
       }
     }
   }

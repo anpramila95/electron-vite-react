@@ -98,6 +98,16 @@ async function createWindow() {
         localServer.broadcastToKey(sessionKey, {
           type: 'CLEAR_QUEUE',
         })
+      } else if (event === 'queue') {
+        localServer.broadcastToKey(sessionKey, {
+          type: 'SET_QUEUE',
+          queue: (data.queue || []).map((q: any) => ({
+            id: q.id,
+            name: q.name,
+            photoUrl: q.photo_url ? `/api/proxy-img?url=${encodeURIComponent(q.photo_url)}` : '',
+            isVip: q.is_vip === 1,
+          })),
+        })
       } else if (event === 'settings') {
         localServer.broadcastToKey(sessionKey, {
           type: 'SET_SETTINGS',
@@ -157,6 +167,29 @@ async function createWindow() {
               streamKey: parsed.streamKey || streamKey,
               ...parsed,
             })
+          } else if (parsed.type === 'USER_PRINTING' && parsed.user && win && !win.isDestroyed()) {
+            win.webContents.send('session:event', {
+              event: 'user_printing',
+              data: {
+                sessionKey: parsed.streamKey || streamKey,
+                user: parsed.user,
+              },
+            })
+          } else if (parsed.type === 'USER_PRINTED' && parsed.userId) {
+            const currentKey = parsed.streamKey || streamKey
+            const target = tiktokManager?.getSessionByStreamKey(currentKey)
+            if (target) {
+              target.removeFromQueue(parsed.userId)
+            }
+            if (win && !win.isDestroyed()) {
+              win.webContents.send('session:event', {
+                event: 'user_printed',
+                data: {
+                  sessionKey: currentKey,
+                  userId: parsed.userId,
+                },
+              })
+            }
           }
         } catch {
           // Ignore
