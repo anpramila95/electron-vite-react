@@ -391,14 +391,19 @@
 
     if (item.type === 'gift') {
       entry.gifts += 1;
-      // Extract diamonds if present in message (e.g. "(10 xu)")
+      // Trích xuất số xu quà tặng từ message "(X xu)"
       const match = (item.message || '').match(/\((\d+)\s*xu\)/i);
-      const dia = match ? parseInt(match[1], 10) : 5;
+      const dia = match ? parseInt(match[1], 10) : 1;
       entry.diamonds += dia;
-      entry.score += dia * 10 + 50;
+      // Tặng quà: Xu * 10
+      entry.score += dia * 10;
+    } else if (item.type === 'member') {
+      // Mới tham gia: +1 điểm
+      entry.score += 1;
     } else {
+      // Comment: +3 điểm
       entry.comments += 1;
-      entry.score += 5;
+      entry.score += 3;
     }
   }
 

@@ -140,6 +140,11 @@ async function createWindow() {
             createdAt: data.log.created_at,
           },
         })
+      } else if (event === 'user_score' && data?.user) {
+        localServer.broadcastToKey(sessionKey, {
+          type: 'USER_SCORE_UPDATE',
+          user: data.user,
+        })
       }
     }
   })
@@ -178,6 +183,7 @@ async function createWindow() {
             entryUrl: `/${tmpl?.entryFile || 'templates/print-booth-3d/index.html'}`,
             settings: session.settings,
             logs: recentLogs,
+            userScores: session.getAllScores(),
             queue: session.getQueue().map((q) => ({
               id: q.id,
               name: q.name,

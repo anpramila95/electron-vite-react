@@ -47,7 +47,14 @@
     <!-- Live Leaderboard Sidebar (Bảng Xếp Hạng) -->
     <div class="leaderboard-sidebar" id="leaderboard-box">
       <div class="lbl-header">
-        <div class="lbl-title">🏆 BẢNG VÀNG CẦN THỦ</div>
+        <div class="lbl-header-top">
+          <div class="lbl-title">🏆 BẢNG VÀNG CẦN THỦ</div>
+          <div class="lbl-actions">
+            <button class="lbl-btn" id="btn-lb-scale-down" title="Thu nhỏ bảng">A-</button>
+            <button class="lbl-btn" id="btn-lb-scale-up" title="Phóng to bảng">A+</button>
+            <button class="lbl-btn" id="btn-lb-toggle" title="Thu gọn / Mở rộng">_</button>
+          </div>
+        </div>
         <div class="lbl-sub">Sắp xếp theo Trọng lượng & VIP</div>
       </div>
       <div class="anglers-list" id="anglers-list">
@@ -100,8 +107,9 @@
     <button class="cam-restore-btn" id="btn-show-cam" title="Hiện thanh camera" style="display: none;">🎥</button>
   </div>
 
-  <!-- Three.js CDN -->
-  <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+  <!-- Three.js local with CDN fallback -->
+  <script src="../../vendor/three.min.js"></script>
+  <script>window.THREE || document.write('<script src="https://unpkg.com/three@0.160.0/build/three.min.js"><\\/script>')</script>
   <script src="../../overlay.js"></script>
   <script src="index.js"></script>
 </body>

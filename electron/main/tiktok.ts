@@ -96,6 +96,38 @@ export class LiveSessionInstance {
   private currentProxy = ''
   private lastFailedProxies = new Set<string>()
 
+  // Điểm tích lũy thống nhất toàn hệ thống của người xem trong phiên live này
+  private userScores = new Map<string, { uniqueId: string; name: string; avatarUrl: string; score: number; isVip: boolean }>()
+
+  public getUserScore(uniqueId: string) {
+    return this.userScores.get(uniqueId)?.score || 0
+  }
+
+  public getAllScores() {
+    return Array.from(this.userScores.values()).sort((a, b) => b.score - a.score)
+  }
+
+  private addUserScore(uniqueId: string, name: string, avatarUrl: string, addPoints: number, isVip = false) {
+    if (!uniqueId || addPoints <= 0) return
+    const current = this.userScores.get(uniqueId) || {
+      uniqueId,
+      name,
+      avatarUrl,
+      score: 0,
+      isVip: false,
+    }
+    current.score += addPoints
+    if (name) current.name = name
+    if (avatarUrl) current.avatarUrl = avatarUrl
+    if (isVip) current.isVip = true
+    this.userScores.set(uniqueId, current)
+
+    this.onBroadcast('user_score', {
+      sessionKey: this.streamKey,
+      user: current,
+    })
+  }
+
   private pickProxy(): string {
     const raw = db.getConfig('proxyUrl')
     if (!raw) return ''
@@ -342,6 +374,9 @@ export class LiveSessionInstance {
         this.addLog('chat', nickname, comment, avatar)
 
         if (this.tiktokConfig.onChat) {
+          // Cộng điểm: comment +3 điểm (khi bật tính năng onChat)
+          this.addUserScore(uniqueId, nickname, avatar, 3)
+
           let shouldAdd = true
           if (this.tiktokConfig.chatKeywordOnly) {
             const keywords = (this.tiktokConfig.keyword || '')
@@ -403,6 +438,10 @@ export class LiveSessionInstance {
 
         if (this.tiktokConfig.onGift) {
           const isBigGift = totalDiamonds >= (this.tiktokConfig.bigGiftThreshold || 10)
+          // Cộng điểm: Tặng quà (tùy giá quà xu) * 10
+          const giftScore = totalDiamonds * 10
+          this.addUserScore(uniqueId, nickname, avatar, giftScore, isBigGift)
+
           // Quà càng lớn priority càng cao vượt trội để lập tức lên #1 hàng chờ
           const priority = isBigGift ? 10000 + totalDiamonds : 2000 + totalDiamonds
 
@@ -433,6 +472,9 @@ export class LiveSessionInstance {
         this.addLog('member', nickname, 'đã tham gia xem Live 👋', avatar)
 
         if (this.tiktokConfig.onJoin) {
+          // Mới tham gia: +1 điểm (khi bật onJoin)
+          this.addUserScore(uniqueId, nickname, avatar, 1)
+
           this.addToQueue({
             uniqueId,
             name: nickname,
@@ -478,6 +520,9 @@ export class LiveSessionInstance {
         this.broadcastStats()
 
         if (this.tiktokConfig.onLike) {
+          // Like: +2 điểm (khi bật onLike)
+          this.addUserScore(uniqueId, nickname, avatar, 2)
+
           this.addToQueue({
             uniqueId,
             name: nickname,
@@ -502,6 +547,9 @@ export class LiveSessionInstance {
         this.addLog('member', nickname, action, avatar)
 
         if (this.tiktokConfig.onShare && isShare) {
+          // Chia sẻ: +2 điểm (khi bật onShare)
+          this.addUserScore(uniqueId, nickname, avatar, 2)
+
           this.addToQueue({
             uniqueId,
             name: nickname,
@@ -660,8 +708,10 @@ export class LiveSessionInstance {
   }) {
     const queue = db.getQueue(this.id)
 
-    // Check if user already in queue
-    if (!this.tiktokConfig.allowDuplicates && item.uniqueId) {
+    // 1. Tặng quà luôn luôn cho phép lặp lại (1 người tặng nhiều lần in nhiều lần)
+    // 2. Các nguồn khác: kiểm tra allowDuplicates
+    const isGiftSource = item.source === 'gift';
+    if (!isGiftSource && !this.tiktokConfig.allowDuplicates && item.uniqueId) {
       const existing = queue.find((q) => q.unique_id === item.uniqueId)
       if (existing) {
         // Cap nhat binh luan moi nhat cua nguoi dung
@@ -671,7 +721,7 @@ export class LiveSessionInstance {
           this.onBroadcast('queue', { sessionKey: this.streamKey, queue: updatedQueue })
         }
 
-        // Upgrade user priority if they take higher action (e.g. from member to chat, or from chat to gift)
+        // Upgrade user priority if they take higher action (e.g. from member to chat)
         if (item.priority > existing.priority) {
           db.removeQueueItem(existing.id)
           // Re-insert with higher priority below
@@ -718,7 +768,7 @@ export class LiveSessionInstance {
   }
 
   public removeFromQueue(id: number) {
-    db.removeQueueItemsByUser(this.id, id)
+    db.removeQueueItem(id)
     const fullQueue = this.getQueue()
     this.onBroadcast('queue', { sessionKey: this.streamKey, queue: fullQueue })
     this.onBroadcast('user_removed', { sessionKey: this.streamKey, id })
