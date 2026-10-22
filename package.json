@@ -17,6 +17,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@faker-js/faker": "^10.6.0",
     "electron-updater": "^6.8.3",
     "tiktok-live-connector": "^2.5.0",
     "ws": "^8.22.0"

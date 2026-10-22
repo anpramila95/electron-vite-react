@@ -639,12 +639,12 @@ const REAL_PHOTOS = [
   "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=256&h=256&q=80",
 ];
 
-// Cache anh that - LRU Cache gioi han 80 anh tranh tran bo nho khi live 24h
+// Cache anh that - LRU Cache gioi han 500 anh tranh tran bo nho khi live 24h
 const PHOTO_CACHE = {};
 const PHOTO_KEYS = [];
 function addPhotoToCache(url, img) {
   if (!url || PHOTO_CACHE[url]) return;
-  if (PHOTO_KEYS.length >= 80) {
+  if (PHOTO_KEYS.length >= 500) {
     const oldest = PHOTO_KEYS.shift();
     if (PHOTO_CACHE[oldest]) {
       PHOTO_CACHE[oldest].src = "";
@@ -653,6 +653,34 @@ function addPhotoToCache(url, img) {
   }
   PHOTO_KEYS.push(url);
   PHOTO_CACHE[url] = img;
+}
+
+function getOrLoadPhoto(url, onReady) {
+  if (!url) return null;
+  let img = PHOTO_CACHE[url];
+  if (!img) {
+    img = new Image();
+    img.crossOrigin = "anonymous";
+    img.src = url;
+    addPhotoToCache(url, img);
+  }
+
+  if (onReady) {
+    if (img.complete && img.naturalWidth > 0) {
+      onReady(img);
+    } else {
+      img.addEventListener(
+        "load",
+        function () {
+          if (img.complete && img.naturalWidth > 0) {
+            onReady(img);
+          }
+        },
+        { once: true },
+      );
+    }
+  }
+  return img;
 }
 
 REAL_PHOTOS.forEach(function (url) {
@@ -1863,6 +1891,7 @@ function makeRealPhotoCard(cx, cy, R, person, theme, opt) {
 
   // 5. CHAY DEN DAU RA HINH DEN DO voi anh thật
   if (photoUrl) {
+    getOrLoadPhoto(photoUrl);
     const slices = R > 200 ? 48 : 28;
     const sh = (2 * R) / slices;
 
@@ -2127,7 +2156,7 @@ function finalize(sheet, s) {
   }
   if (s.photoSlice) {
     const g = sheet.ctx;
-    const img = PHOTO_CACHE[s.photoUrl];
+    const img = getOrLoadPhoto(s.photoUrl);
     if (img && img.complete && img.naturalWidth > 0) {
       g.save();
       g.beginPath();
@@ -2171,44 +2200,33 @@ function finalize(sheet, s) {
         );
       }
       g.restore();
-    } else if (img) {
-      img.onload = function () {
-        if (img.complete && img.naturalWidth > 0) {
-          g.save();
-          g.beginPath();
-          g.arc(s.cx, s.cy, s.r * 0.98, 0, Math.PI * 2);
-          g.clip();
-          const nw = img.naturalWidth;
-          const nh = img.naturalHeight;
-          const minDim = Math.min(nw, nh);
-          const cropX = (nw - minDim) / 2;
-          const cropY = (nh - minDim) / 2;
-          g.drawImage(img, cropX, cropY, minDim, minDim, s.cx - s.r, s.cy - s.r, s.r * 2, s.r * 2);
-          g.restore();
-          sheet.dirty = true;
-        }
-      };
     }
     glowBurst(s.pts[1][0], s.pts[1][1], 16);
     sheet.dirty = true;
   }
   if (s.lastOfSlot && s.photoUrl) {
-    const img = PHOTO_CACHE[s.photoUrl];
-    if (img && img.complete && img.naturalWidth > 0 && s.cx !== undefined) {
+    const drawSlotPhoto = function (imgObj) {
+      if (!imgObj || !imgObj.complete || imgObj.naturalWidth === 0 || s.cx === undefined) return;
       const g = sheet.ctx;
       g.save();
       g.beginPath();
       g.arc(s.cx, s.cy, s.r * 0.98, 0, Math.PI * 2);
       g.clip();
-      const nw = img.naturalWidth;
-      const nh = img.naturalHeight;
+      const nw = imgObj.naturalWidth;
+      const nh = imgObj.naturalHeight;
       const minDim = Math.min(nw, nh);
       const cropX = (nw - minDim) / 2;
       const cropY = (nh - minDim) / 2;
-      g.drawImage(img, cropX, cropY, minDim, minDim, s.cx - s.r, s.cy - s.r, s.r * 2, s.r * 2);
+      g.drawImage(imgObj, cropX, cropY, minDim, minDim, s.cx - s.r, s.cy - s.r, s.r * 2, s.r * 2);
       g.restore();
       sheet.dirty = true;
+    };
+
+    const finalImg = getOrLoadPhoto(s.photoUrl, drawSlotPhoto);
+    if (finalImg && finalImg.complete && finalImg.naturalWidth > 0) {
+      drawSlotPhoto(finalImg);
     }
+  }
   }
   if (s.restore && sheet.clipDepth > 0) {
     g.restore();
@@ -3608,12 +3626,42 @@ setTimeout(function () {
     } else if (msg.type === "CLEAR_QUEUE") {
       userQueue.length = 0;
       updateHUD();
-    } else if (msg.type === "SET_QUEUE" && Array.isArray(msg.queue)) {
-      if (userQueue.length === 0) {
-        msg.queue.forEach(function (user) {
-          addUserToQueue(user.isVip, user);
-        });
+    } else if (msg.type === "PRIORITIZE_NOW" && msg.id) {
+      const idx = userQueue.findIndex(function (u) {
+        return u.id === msg.id;
+      });
+      if (idx !== -1) {
+        const item = userQueue.splice(idx, 1)[0];
+        item.isVip = true;
+        item.priority = 99999;
+        userQueue.unshift(item);
+        if (state.rare && queued) {
+          queued.mode = "full";
+        }
+        toastKey("⚡ Đẩy in ưu tiên: <b>" + item.name + "</b>");
+        updateHUD();
       }
+    } else if (msg.type === "SET_QUEUE" && Array.isArray(msg.queue)) {
+      const idMap = {};
+      userQueue.forEach(function (u) {
+        idMap[u.id] = u;
+      });
+      userQueue.length = 0;
+      msg.queue.forEach(function (u) {
+        const item = idMap[u.id] || {
+          id: u.id,
+          name: u.name,
+          photoUrl: u.photoUrl,
+          isVip: !!u.isVip,
+          priority: u.priority || 0,
+          addedAt: Date.now(),
+        };
+        userQueue.push(item);
+        if (item.photoUrl) {
+          getOrLoadPhoto(item.photoUrl);
+        }
+      });
+      updateHUD();
     } else if (msg.type === "ACTION") {
       handleAction(msg.action, msg.value);
     }

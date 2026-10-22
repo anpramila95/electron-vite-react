@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
+import { MusicPlayer } from './components/MusicPlayer'
+import { FakerBatchModal } from './components/FakerBatchModal'
 
 interface TemplateOptionField {
   key: string
@@ -221,6 +223,20 @@ function VirtualQueueList({
                 </div>
 
                 <div className='flex items-center gap-1 shrink-0'>
+                  <button
+                    title='Đẩy in luôn (Ưu tiên số 1)'
+                    onClick={() =>
+                      window.ipcRenderer?.invoke('queue:force-print', {
+                        sessionId,
+                        id: item.id,
+                      })
+                    }
+                    className='flex items-center gap-0.5 rounded border border-amber-500/40 bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold text-amber-300 hover:bg-amber-500/30 cursor-pointer transition'
+                  >
+                    <span>⚡</span>
+                    <span className='hidden sm:inline'>In luôn</span>
+                  </button>
+
                   {item.is_vip !== 1 && (
                     <button
                       title='Ưu tiên lên VIP'
@@ -271,6 +287,8 @@ export default function App() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [logFilter, setLogFilter] = useState<'all' | 'chat' | 'gift' | 'member'>('all')
   const [queueTab, setQueueTab] = useState<'waiting' | 'running'>('waiting')
+  const [showMusicPlayer, setShowMusicPlayer] = useState(false)
+  const [showFakerModal, setShowFakerModal] = useState(false)
   const [previewClientCounts, setPreviewClientCounts] = useState<Record<string, number>>({})
   const [actionNotice, setActionNotice] = useState<{ text: string; isError?: boolean } | null>(null)
 
@@ -578,11 +596,16 @@ export default function App() {
     }
   }
 
-  const handleManualAdd = async (e: React.FormEvent) => {
+  const handleManualAdd = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!manualName.trim() || !currentSession) return
+    if (!currentSession || !window.ipcRenderer) return
 
-    await window.ipcRenderer?.invoke('queue:add-manual', {
+    if (!manualName.trim()) {
+      setShowFakerModal(true)
+      return
+    }
+
+    window.ipcRenderer.invoke('queue:add-manual', {
       sessionId: currentSession.id,
       name: manualName.trim(),
       photoUrl: manualAvatar.trim(),
@@ -986,6 +1009,14 @@ export default function App() {
 
               {/* Action Buttons */}
               <div className='flex items-center gap-2'>
+                <button
+                  onClick={() => setShowMusicPlayer(true)}
+                  className='rounded-lg border border-indigo-500/40 bg-indigo-950/40 px-3 py-1 text-xs font-semibold text-indigo-300 hover:bg-indigo-900/50 flex items-center gap-1.5 transition cursor-pointer'
+                  title='Mở trình phát nhạc nền YouTube / MP3 / Thư mục máy'
+                >
+                  <span>🎵</span>
+                  <span>Nhạc nền</span>
+                </button>
                 <button
                   onClick={() => copyObsUrl()}
                   className='rounded-lg border border-cyan-500/40 bg-cyan-950/50 px-3 py-1 text-xs font-semibold text-cyan-300 hover:bg-cyan-900/60'
@@ -1528,7 +1559,7 @@ export default function App() {
                               <span className='relative inline-flex rounded-full h-2 w-2 bg-amber-500'></span>
                             </span>
                           )}
-                          ⚡ Đang chạy
+                          ⚡ Đang in
                         </span>
                         <span
                           className={`rounded-full px-1.5 py-0.2 text-[10px] ${
@@ -1537,7 +1568,10 @@ export default function App() {
                               : 'bg-slate-800 text-slate-300'
                           }`}
                         >
-                          {(currentSession.printingUsers || []).length}
+                          {Math.min(
+                            30,
+                            (currentSession.printingUsers || []).length + (currentSession.queue || []).length,
+                          )}
                         </span>
                       </button>
                     </div>
@@ -1556,19 +1590,19 @@ export default function App() {
 
                   {queueTab === 'waiting' ? (
                     <>
-                      {/* Form thêm thủ công */}
+                      {/* Form thêm thủ công & Faker AI */}
                       <form onSubmit={handleManualAdd} className='mb-3 flex gap-2'>
                         <input
                           type='text'
                           value={manualName}
                           onChange={(e) => setManualName(e.target.value)}
-                          placeholder='Tên khán giả test...'
+                          placeholder='Tên khán giả test (hoặc bấm +Thêm để tạo hàng loạt)...'
                           className='flex-1 rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 text-xs text-white focus:border-cyan-500 focus:outline-none'
                         />
                         <button
                           type='button'
                           onClick={() => setManualIsVip(!manualIsVip)}
-                          className={`rounded-lg px-2.5 py-1.5 text-xs font-bold border transition ${
+                          className={`rounded-lg px-2.5 py-1.5 text-xs font-bold border transition cursor-pointer ${
                             manualIsVip
                               ? 'border-amber-400 bg-amber-500/20 text-amber-300'
                               : 'border-slate-800 bg-slate-950 text-slate-400'
@@ -1578,9 +1612,18 @@ export default function App() {
                         </button>
                         <button
                           type='submit'
-                          className='rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-cyan-500'
+                          className='rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-cyan-500 cursor-pointer'
                         >
                           + Thêm
+                        </button>
+                        <button
+                          type='button'
+                          onClick={() => setShowFakerModal(true)}
+                          title='Mở modal tạo hàng loạt khán giả test bằng Faker AI'
+                          className='rounded-lg border border-purple-500/40 bg-purple-500/20 px-2.5 py-1.5 text-xs font-bold text-purple-300 hover:bg-purple-500/30 cursor-pointer flex items-center gap-1 shrink-0'
+                        >
+                          <span>🎲</span>
+                          <span className='hidden sm:inline'>Faker AI</span>
                         </button>
                       </form>
 
@@ -1592,75 +1635,169 @@ export default function App() {
                       />
                     </>
                   ) : (
-                    /* Tab 2: Danh sách đang chạy (đang vẽ) */
+                    /* Tab 2: Danh sách 30 người cần in gần nhất */
                     <div className='flex-1 overflow-y-auto dark-scroll space-y-2 pr-1'>
-                      {(currentSession.printingUsers || []).length === 0 ? (
-                        <div className='flex h-64 flex-col items-center justify-center text-center text-slate-500'>
-                          <span className='text-3xl mb-2'>🖨️</span>
-                          <p className='text-xs font-medium text-slate-300 mb-1'>
-                            Chưa có lượt in nào đang chạy
-                          </p>
-                          <p className='text-[11px] text-slate-500 max-w-xs'>
-                            Khi máy in bắt đầu vẽ khán giả, thông tin sẽ hiển thị tại đây. Sau khi vẽ xong sẽ tự động xóa ngay.
-                          </p>
-                        </div>
-                      ) : (
-                        (currentSession.printingUsers || []).map((user: any) => (
-                          <div
-                            key={user.id}
-                            className='flex items-center gap-3 rounded-xl border border-amber-500/40 bg-gradient-to-r from-amber-500/10 via-slate-900 to-slate-950 p-3 shadow-md'
-                          >
-                            <div className='relative h-11 w-11 shrink-0 overflow-hidden rounded-full border-2 border-amber-400 bg-slate-800 shadow-sm'>
-                              {user.photoUrl ? (
-                                <img
-                                  src={user.photoUrl}
-                                  alt={user.name}
-                                  className='h-full w-full object-cover'
-                                  onError={(e) => {
-                                    ;(e.target as HTMLElement).style.display = 'none'
-                                  }}
-                                />
-                              ) : (
-                                <div className='flex h-full w-full items-center justify-center text-sm font-bold text-slate-300'>
-                                  {user.name?.charAt(0) || '👤'}
-                                </div>
-                              )}
-                              <div className='absolute bottom-0 right-0 h-3 w-3 rounded-full bg-emerald-500 border border-slate-900' />
+                      {(() => {
+                        const printingList = currentSession.printingUsers || []
+                        const maxUpcoming = Math.max(0, 30 - printingList.length)
+                        const upcomingList = (currentSession.queue || []).slice(0, maxUpcoming)
+
+                        if (printingList.length === 0 && upcomingList.length === 0) {
+                          return (
+                            <div className='flex h-64 flex-col items-center justify-center text-center text-slate-500'>
+                              <span className='text-3xl mb-2'>🖨️</span>
+                              <p className='text-xs font-medium text-slate-300 mb-1'>
+                                Chưa có khán giả nào trong danh sách in
+                              </p>
+                              <p className='text-[11px] text-slate-500 max-w-xs'>
+                                Khi có khán giả trong hàng chờ hoặc máy in bắt đầu vẽ, 30 lượt in gần nhất sẽ hiển thị tại đây.
+                              </p>
+                            </div>
+                          )
+                        }
+
+                        return (
+                          <>
+                            <div className='flex items-center justify-between text-[11px] font-bold text-slate-400 pb-1 border-b border-slate-800/80'>
+                              <span className='flex items-center gap-1'>
+                                <span>⚡ TIẾN TRÌNH IN</span>
+                                <span className='text-slate-500'>(30 người gần nhất)</span>
+                              </span>
+                              <span className='text-amber-400 font-mono'>
+                                {printingList.length} đang vẽ · {upcomingList.length} sắp in
+                              </span>
                             </div>
 
-                            <div className='min-w-0 flex-1'>
-                              <div className='flex items-center gap-1.5'>
-                                <span className='truncate text-xs font-bold text-white'>
-                                  {user.name}
-                                </span>
-                                {user.isVip ? (
-                                  <span className='rounded bg-amber-500/20 px-1 py-0.2 text-[9px] font-bold text-amber-300 border border-amber-500/40'>
-                                    👑 VIP
-                                  </span>
-                                ) : (
-                                  <span className='rounded bg-cyan-500/20 px-1 py-0.2 text-[9px] font-bold text-cyan-300 border border-cyan-500/40'>
-                                    {user.source === 'gift' ? '🎁 QUÀ' : '💬 CHAT'}
-                                  </span>
-                                )}
+                            {/* 1. Những người ĐANG VẼ trên máy in */}
+                            {printingList.map((user: any) => (
+                              <div
+                                key={`printing_${user.id}`}
+                                className='flex items-center gap-3 rounded-xl border border-amber-500/50 bg-gradient-to-r from-amber-500/15 via-slate-900 to-slate-950 p-2.5 shadow-md ring-1 ring-amber-500/30'
+                              >
+                                <div className='relative h-10 w-10 shrink-0 overflow-hidden rounded-full border-2 border-amber-400 bg-slate-800 shadow-sm'>
+                                  {user.photoUrl ? (
+                                    <img
+                                      src={user.photoUrl}
+                                      alt={user.name}
+                                      className='h-full w-full object-cover'
+                                      onError={(e) => {
+                                        ;(e.target as HTMLElement).style.display = 'none'
+                                      }}
+                                    />
+                                  ) : (
+                                    <div className='flex h-full w-full items-center justify-center text-sm font-bold text-slate-300'>
+                                      {user.name?.charAt(0) || '👤'}
+                                    </div>
+                                  )}
+                                  <div className='absolute bottom-0 right-0 h-3 w-3 rounded-full bg-emerald-500 border border-slate-900' />
+                                </div>
+
+                                <div className='min-w-0 flex-1'>
+                                  <div className='flex items-center gap-1.5'>
+                                    <span className='truncate text-xs font-bold text-white'>
+                                      {user.name}
+                                    </span>
+                                    {user.isVip ? (
+                                      <span className='rounded bg-amber-500/20 px-1 py-0.2 text-[9px] font-bold text-amber-300 border border-amber-500/40'>
+                                        👑 VIP
+                                      </span>
+                                    ) : (
+                                      <span className='rounded bg-cyan-500/20 px-1 py-0.2 text-[9px] font-bold text-cyan-300 border border-cyan-500/40'>
+                                        {user.source === 'gift' ? '🎁 QUÀ' : '💬 CHAT'}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className='mt-0.5 flex items-center gap-2 text-[11px] text-amber-300'>
+                                    <span className='flex items-center gap-1 font-bold'>
+                                      <span className='relative flex h-2 w-2'>
+                                        <span className='animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75'></span>
+                                        <span className='relative inline-flex rounded-full h-2 w-2 bg-amber-500'></span>
+                                      </span>
+                                      ⚡ ĐANG VẼ TRÊN MÁY IN...
+                                    </span>
+                                    {user.comment && (
+                                      <span className='truncate text-[10px] text-slate-400 italic'>
+                                        "{user.comment}"
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
                               </div>
-                              <div className='mt-1 flex items-center gap-2 text-[11px] text-amber-300'>
-                                <span className='flex items-center gap-1 font-semibold'>
-                                  <span className='relative flex h-2 w-2'>
-                                    <span className='animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75'></span>
-                                    <span className='relative inline-flex rounded-full h-2 w-2 bg-amber-500'></span>
-                                  </span>
-                                  ⚡ Đang vẽ trên máy in...
-                                </span>
-                                {user.comment && (
-                                  <span className='truncate text-[10px] text-slate-400 italic'>
-                                    "{user.comment}"
-                                  </span>
-                                )}
+                            ))}
+
+                            {/* 2. Những người TIẾP THEO trong hàng chờ sắp được in */}
+                            {upcomingList.map((item, idx) => (
+                              <div
+                                key={`upcoming_${item.id}`}
+                                className={`flex items-center justify-between rounded-xl border px-2.5 py-1.5 transition ${
+                                  item.is_vip === 1
+                                    ? 'border-amber-500/30 bg-amber-950/15'
+                                    : item.source === 'gift'
+                                    ? 'border-pink-500/25 bg-pink-950/10'
+                                    : 'border-slate-800/80 bg-slate-950/50'
+                                }`}
+                              >
+                                <div className='flex items-center gap-2.5 overflow-hidden'>
+                                  <div className='flex flex-col items-center justify-center w-8 shrink-0'>
+                                    <span className='font-mono text-[10px] font-bold text-cyan-400'>
+                                      #{idx + 1}
+                                    </span>
+                                    <span className='text-[8px] uppercase tracking-wider text-slate-500 font-semibold'>
+                                      Sắp in
+                                    </span>
+                                  </div>
+
+                                  <div className='relative h-8 w-8 shrink-0 overflow-hidden rounded-full border border-slate-700 bg-slate-800'>
+                                    {item.photo_url ? (
+                                      <img
+                                        src={item.photo_url}
+                                        alt={item.name}
+                                        className='h-full w-full object-cover'
+                                        loading='lazy'
+                                      />
+                                    ) : (
+                                      <div className='flex h-full w-full items-center justify-center text-xs font-bold text-cyan-400'>
+                                        {item.name.slice(0, 1)}
+                                      </div>
+                                    )}
+                                    {item.is_vip === 1 && (
+                                      <span className='absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full bg-amber-400 border border-slate-950' />
+                                    )}
+                                  </div>
+
+                                  <div className='truncate'>
+                                    <div className='flex items-center gap-1.5'>
+                                      <span className='text-xs font-semibold text-white truncate'>
+                                        {item.name}
+                                      </span>
+                                      {getSourceBadge(item)}
+                                    </div>
+                                    <div className='text-[10px] text-slate-400 truncate'>
+                                      {item.comment ? `"${item.comment}"` : item.gift_name ? `🎁 ${item.gift_name}` : 'Chờ in'}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div className='flex items-center gap-1 shrink-0'>
+                                  <button
+                                    title='Đẩy in ưu tiên ngay'
+                                    onClick={() =>
+                                      window.ipcRenderer?.invoke('queue:force-print', {
+                                        sessionId: currentSession.id,
+                                        id: item.id,
+                                      })
+                                    }
+                                    className='flex items-center gap-0.5 rounded border border-amber-500/40 bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold text-amber-300 hover:bg-amber-500/30 cursor-pointer transition'
+                                  >
+                                    <span>⚡</span>
+                                    <span>In luôn</span>
+                                  </button>
+                                </div>
                               </div>
-                            </div>
-                          </div>
-                        ))
-                      )}
+                            ))}
+                          </>
+                        )
+                      })()}
                     </div>
                   )}
                 </div>
@@ -1737,6 +1874,28 @@ export default function App() {
               </div>
             </div>
           </div>
+        )}
+
+        {/* Modal Faker Batch Test Audience */}
+        {currentSession && (
+          <FakerBatchModal
+            isOpen={showFakerModal}
+            onClose={() => setShowFakerModal(false)}
+            sessionId={currentSession.id}
+            onSuccess={(num) => {
+              // Toast or notification
+              console.log(`Đã thêm thành công ${num} khán giả test`)
+            }}
+          />
+        )}
+
+        {/* Modal Trình phát nhạc nền (YouTube / MP3 / Thư mục máy) */}
+        {currentSession && (
+          <MusicPlayer
+            isOpen={showMusicPlayer}
+            onClose={() => setShowMusicPlayer(false)}
+            streamKey={currentSession.streamKey}
+          />
         )}
       </div>
     </div>

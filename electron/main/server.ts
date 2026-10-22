@@ -15,6 +15,15 @@ export interface ServerInstance {
   close: () => Promise<void>
 }
 
+const imageMemoryCache = new Map<string, { buffer: Buffer; contentType: string }>()
+const MAX_IMAGE_CACHE = 400
+
+const DEFAULT_AVATAR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <circle cx="64" cy="64" r="64" fill="#334155"/>
+  <circle cx="64" cy="50" r="24" fill="#94a3b8"/>
+  <path d="M20,110 C20,86 40,78 64,78 C88,78 108,86 108,110 Z" fill="#94a3b8"/>
+</svg>`
+
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -26,6 +35,12 @@ const MIME_TYPES: Record<string, string> = {
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
   '.webp': 'image/webp',
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg',
+  '.m4a': 'audio/mp4',
+  '.flac': 'audio/flac',
+  '.aac': 'audio/aac',
 }
 
 export function startLocalServer(publicDir: string, defaultPort = 3210): Promise<ServerInstance> {
@@ -72,46 +87,73 @@ export function startLocalServer(publicDir: string, defaultPort = 3210): Promise
           return
         }
 
-        try {
-          let upstream = await fetch(targetUrl, {
-            headers: {
-              'User-Agent':
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-              'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
-            },
-          })
-
-          // Retry without headers if upstream returned 403 Forbidden
-          if (!upstream.ok && (upstream.status === 403 || upstream.status === 401)) {
-            upstream = await fetch(targetUrl)
-          }
-
-          if (!upstream.ok) {
-            // Fallback: 302 redirect directly to targetUrl so browser loads it directly
-            res.writeHead(302, {
-              Location: targetUrl,
-              'Access-Control-Allow-Origin': '*',
-            })
-            res.end()
-            return
-          }
-
-          const contentType = upstream.headers.get('content-type') || 'image/jpeg'
+        // Return from memory cache if available
+        const cached = imageMemoryCache.get(targetUrl)
+        if (cached) {
           res.writeHead(200, {
-            'Content-Type': contentType,
+            'Content-Type': cached.contentType,
             'Cache-Control': 'public, max-age=86400',
             'Access-Control-Allow-Origin': '*',
             'Access-Control-Allow-Methods': 'GET, OPTIONS',
           })
-          const arrayBuffer = await upstream.arrayBuffer()
-          res.end(Buffer.from(arrayBuffer))
-        } catch (err: any) {
-          // Fallback on network error: redirect to image directly
-          res.writeHead(302, {
-            Location: targetUrl,
+          res.end(cached.buffer)
+          return
+        }
+
+        try {
+          // Attempt 1: Fetch with standard headers
+          let upstream: Response | null = null
+          try {
+            upstream = await fetch(targetUrl, {
+              headers: {
+                'User-Agent':
+                  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+              },
+            })
+          } catch {}
+
+          // Attempt 2: Fetch without custom headers if first attempt failed
+          if (!upstream || !upstream.ok) {
+            try {
+              upstream = await fetch(targetUrl)
+            } catch {}
+          }
+
+          if (upstream && upstream.ok) {
+            const contentType = upstream.headers.get('content-type') || 'image/jpeg'
+            const arrayBuffer = await upstream.arrayBuffer()
+            const buf = Buffer.from(arrayBuffer)
+
+            // Cache in memory
+            if (imageMemoryCache.size >= MAX_IMAGE_CACHE) {
+              const firstKey = imageMemoryCache.keys().next().value
+              if (firstKey) imageMemoryCache.delete(firstKey)
+            }
+            imageMemoryCache.set(targetUrl, { buffer: buf, contentType })
+
+            res.writeHead(200, {
+              'Content-Type': contentType,
+              'Cache-Control': 'public, max-age=86400',
+              'Access-Control-Allow-Origin': '*',
+              'Access-Control-Allow-Methods': 'GET, OPTIONS',
+            })
+            res.end(buf)
+            return
+          }
+
+          // Fallback: Send default avatar SVG with CORS header so canvas never throws CORS error
+          res.writeHead(200, {
+            'Content-Type': 'image/svg+xml',
             'Access-Control-Allow-Origin': '*',
           })
-          res.end()
+          res.end(DEFAULT_AVATAR_SVG)
+        } catch {
+          res.writeHead(200, {
+            'Content-Type': 'image/svg+xml',
+            'Access-Control-Allow-Origin': '*',
+          })
+          res.end(DEFAULT_AVATAR_SVG)
         }
         return
       }
@@ -128,6 +170,51 @@ export function startLocalServer(publicDir: string, defaultPort = 3210): Promise
           res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
           res.end(data)
         })
+        return
+      }
+
+      // Stream local audio files for OBS preview background music
+      if (pathname === '/api/audio-file') {
+        const audioPath = reqUrl.searchParams.get('path')
+        if (!audioPath || !fs.existsSync(audioPath)) {
+          res.writeHead(404, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' })
+          res.end('Audio file not found')
+          return
+        }
+
+        try {
+          const ext = path.extname(audioPath).toLowerCase()
+          const mime = MIME_TYPES[ext] || 'audio/mpeg'
+          const stat = fs.statSync(audioPath)
+          const fileSize = stat.size
+          const range = req.headers.range
+
+          if (range) {
+            const parts = range.replace(/bytes=/, '').split('-')
+            const start = parseInt(parts[0], 10)
+            const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1
+            const chunksize = end - start + 1
+            const file = fs.createReadStream(audioPath, { start, end })
+            res.writeHead(206, {
+              'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+              'Accept-Ranges': 'bytes',
+              'Content-Length': chunksize,
+              'Content-Type': mime,
+              'Access-Control-Allow-Origin': '*',
+            })
+            file.pipe(res)
+          } else {
+            res.writeHead(200, {
+              'Content-Length': fileSize,
+              'Content-Type': mime,
+              'Access-Control-Allow-Origin': '*',
+            })
+            fs.createReadStream(audioPath).pipe(res)
+          }
+        } catch (err: any) {
+          res.writeHead(500, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' })
+          res.end(err.message || 'Error streaming audio')
+        }
         return
       }
 

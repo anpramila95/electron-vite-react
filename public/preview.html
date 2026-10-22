@@ -24,11 +24,98 @@
 <body>
   <iframe id="template-frame" allow="autoplay; cross-origin-isolated" allowtransparency="true"></iframe>
 
+  <!-- Background Music Player for OBS Preview Stream -->
+  <audio id="bgm-audio" preload="auto"></audio>
+  <div id="yt-container" style="position: fixed; width: 1px; height: 1px; left: -9999px; bottom: 0; opacity: 0; pointer-events: none; overflow: hidden;">
+    <iframe id="yt-bgm-frame" allow="autoplay" style="width: 200px; height: 200px;"></iframe>
+  </div>
+
   <script>
     const frame = document.getElementById('template-frame');
+    const bgmAudio = document.getElementById('bgm-audio');
+    const ytBgmFrame = document.getElementById('yt-bgm-frame');
     const params = new URLSearchParams(location.search);
     const streamKey = params.get('key') || 'live_default';
     let currentTemplateId = '';
+    let currentYtId = '';
+    let currentMusicState = null;
+
+    // Control YouTube iframe via postMessage
+    function sendYtCommand(func, args) {
+      if (!ytBgmFrame || !ytBgmFrame.contentWindow) return;
+      ytBgmFrame.contentWindow.postMessage(JSON.stringify({
+        event: 'command',
+        func: func,
+        args: args || []
+      }), '*');
+    }
+
+    function applyMusicState(music) {
+      if (!music) return;
+      currentMusicState = music;
+
+      const isPlaying = !!music.isPlaying;
+      const vol = typeof music.volume === 'number' ? music.volume : 70;
+      const isLoop = music.isLoop !== false;
+
+      if (music.sourceType === 'youtube' && music.youtubeId) {
+        // Pause local audio
+        if (bgmAudio) {
+          bgmAudio.pause();
+          bgmAudio.src = '';
+        }
+
+        if (currentYtId !== music.youtubeId) {
+          currentYtId = music.youtubeId;
+          ytBgmFrame.src = `https://www.youtube.com/embed/${music.youtubeId}?enablejsapi=1&autoplay=1&loop=1&playlist=${music.youtubeId}&origin=${encodeURIComponent(location.origin)}`;
+        }
+
+        setTimeout(() => {
+          sendYtCommand('setVolume', [vol]);
+          if (isPlaying) {
+            sendYtCommand('playVideo');
+          } else {
+            sendYtCommand('pauseVideo');
+          }
+        }, 500);
+
+      } else if (music.sourceType === 'mp3' || music.sourceType === 'local') {
+        // Stop YouTube
+        if (currentYtId) {
+          sendYtCommand('pauseVideo');
+          ytBgmFrame.src = 'about:blank';
+          currentYtId = '';
+        }
+
+        if (music.url) {
+          const targetUrl = new URL(music.url, location.origin).href;
+          if (bgmAudio.src !== targetUrl) {
+            bgmAudio.src = targetUrl;
+          }
+          bgmAudio.volume = vol / 100;
+          bgmAudio.loop = isLoop && (!music.playlist || music.playlist.length <= 1);
+
+          if (isPlaying) {
+            bgmAudio.play().catch(e => console.log('BGM Autoplay notice:', e.message));
+          } else {
+            bgmAudio.pause();
+          }
+        } else {
+          bgmAudio.pause();
+        }
+      } else {
+        // Stop all
+        if (bgmAudio) bgmAudio.pause();
+        if (currentYtId) sendYtCommand('pauseVideo');
+      }
+    }
+
+    // Auto next track in playlist when track ends
+    bgmAudio.addEventListener('ended', () => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'MUSIC_NEXT', key: streamKey }));
+      }
+    });
 
     function setTemplateUrl(entryUrl) {
       const url = new URL(entryUrl, location.origin);
@@ -73,6 +160,8 @@
               setTemplateUrl(msg.entryUrl);
               currentTemplateId = msg.templateId;
             }
+          } else if (msg.type === 'SET_MUSIC') {
+            applyMusicState(msg.music);
           }
         } catch (err) {}
       };

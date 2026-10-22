@@ -1,8 +1,9 @@
-import { app, BrowserWindow, shell, ipcMain } from 'electron'
+import { app, BrowserWindow, shell, ipcMain, dialog } from 'electron'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import os from 'node:os'
+import fs from 'node:fs'
 import { update } from './update'
 import { startLocalServer, type ServerInstance } from './server'
 import { db } from './db'
@@ -31,6 +32,7 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 let win: BrowserWindow | null = null
+const musicStates = new Map<string, any>()
 const preload = path.join(__dirname, '../preload/index.mjs')
 const indexHtml = path.join(RENDERER_DIST, 'index.html')
 
@@ -152,6 +154,10 @@ async function createWindow() {
 
       if (session) {
         sendSessionInit(ws, session)
+        const music = musicStates.get(session.streamKey)
+        if (music) {
+          ws.send(JSON.stringify({ type: 'SET_MUSIC', music }))
+        }
       }
 
       ws.on('message', (msg: any) => {
@@ -161,6 +167,21 @@ async function createWindow() {
             const target = tiktokManager?.getSessionByStreamKey(parsed.key)
             if (target) {
               sendSessionInit(ws, target)
+              const music = musicStates.get(target.streamKey)
+              if (music) {
+                ws.send(JSON.stringify({ type: 'SET_MUSIC', music }))
+              }
+            }
+          } else if (parsed.type === 'MUSIC_NEXT' && parsed.key) {
+            const current = musicStates.get(parsed.key)
+            if (current && Array.isArray(current.playlist) && current.playlist.length > 0) {
+              const nextIdx = (current.currentTrackIndex + 1) % current.playlist.length
+              current.currentTrackIndex = nextIdx
+              current.url = current.playlist[nextIdx]?.url
+              current.title = current.playlist[nextIdx]?.name
+              musicStates.set(parsed.key, current)
+              localServer?.broadcastToKey(parsed.key, { type: 'SET_MUSIC', music: current })
+              win?.webContents.send('music:state-change', { streamKey: parsed.key, music: current })
             }
           } else if (parsed.type === 'SYNC_STATUS' && win && !win.isDestroyed()) {
             win.webContents.send('overlay:sync', {
@@ -343,6 +364,96 @@ ipcMain.handle('queue:prioritize-vip', (_, { sessionId, id }) => {
   if (!session) return { success: false }
   session.prioritizeVip(id)
   return { success: true }
+})
+
+ipcMain.handle('queue:force-print', (_, { sessionId, id }) => {
+  const session = tiktokManager?.getSession(sessionId)
+  if (!session) return { success: false }
+  session.forcePrint(id)
+  if (localServer) {
+    localServer.broadcastToKey(session.streamKey, {
+      type: 'PRIORITIZE_NOW',
+      id,
+    })
+  }
+  return { success: true }
+})
+
+// Music IPC Handlers for OBS Preview Background Music
+ipcMain.handle('music:update', (_, { streamKey, music }) => {
+  if (!streamKey) return { success: false }
+  musicStates.set(streamKey, music)
+  if (localServer) {
+    localServer.broadcastToKey(streamKey, {
+      type: 'SET_MUSIC',
+      music,
+    })
+  }
+  return { success: true }
+})
+
+ipcMain.handle('music:get-state', (_, streamKey) => {
+  return musicStates.get(streamKey) || null
+})
+
+ipcMain.handle('music:pick-folder', async () => {
+  if (!win) return []
+  const result = await dialog.showOpenDialog(win, {
+    properties: ['openDirectory'],
+    title: 'Chọn thư mục chứa nhạc nền',
+  })
+
+  if (result.canceled || result.filePaths.length === 0) return []
+  const dirPath = result.filePaths[0]
+
+  try {
+    const files = fs.readdirSync(dirPath)
+    const audioExts = ['.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac']
+    const tracks: any[] = []
+
+    for (const f of files) {
+      const ext = path.extname(f).toLowerCase()
+      if (audioExts.includes(ext)) {
+        const fullPath = path.join(dirPath, f)
+        tracks.push({
+          id: `${f}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          name: path.basename(f, ext),
+          path: fullPath,
+          url: `/api/audio-file?path=${encodeURIComponent(fullPath)}`,
+        })
+      }
+    }
+    return tracks
+  } catch (err) {
+    console.error('Error scanning music folder:', err)
+    return []
+  }
+})
+
+ipcMain.handle('music:pick-files', async () => {
+  if (!win) return []
+  const result = await dialog.showOpenDialog(win, {
+    properties: ['openFile', 'multiSelections'],
+    title: 'Chọn các file nhạc nền',
+    filters: [
+      { name: 'Audio Files', extensions: ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac'] },
+    ],
+  })
+
+  if (result.canceled || result.filePaths.length === 0) return []
+  const tracks: any[] = []
+
+  for (const fullPath of result.filePaths) {
+    const ext = path.extname(fullPath).toLowerCase()
+    const fileName = path.basename(fullPath, ext)
+    tracks.push({
+      id: `${fileName}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      name: fileName,
+      path: fullPath,
+      url: `/api/audio-file?path=${encodeURIComponent(fullPath)}`,
+    })
+  }
+  return tracks
 })
 
 ipcMain.handle('queue:clear', (_, { sessionId }) => {

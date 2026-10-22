@@ -633,6 +633,12 @@ export class LiveSessionInstance {
     this.onBroadcast('queue', { sessionKey: this.streamKey, queue: fullQueue })
   }
 
+  public forcePrint(id: number) {
+    db.prioritizeVip(id)
+    const fullQueue = this.getQueue()
+    this.onBroadcast('queue', { sessionKey: this.streamKey, queue: fullQueue })
+  }
+
   public clearQueue() {
     db.clearQueue(this.id)
     this.onBroadcast('queue', { sessionKey: this.streamKey, queue: [] })

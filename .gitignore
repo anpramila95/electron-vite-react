@@ -33,3 +33,5 @@ yarn.lock
 /playwright/.cache/
 
 test/screenshots
+
+live-stream.sqlite
