@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>ĐUA XE AVATAR 3D — GRAND PRIX TIKTOK LIVE</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Space+Grotesk:wght@500;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="index.css" />
+  <link rel="stylesheet" href="../../overlay.css" />
+</head>
+<body>
+  <div id="game-canvas-container">
+    <canvas id="three-canvas"></canvas>
+  </div>
+
+  <!-- In-Game 3D HUD -->
+  <div class="hud" id="hud">
+    <div class="hud-top">
+      <div class="brand-box">
+        <h1>TIKTOK <em>GRAND PRIX</em> 3D</h1>
+        <div class="sub">Tặng quà / Bình luận để nạp xe & kích hoạt Nitro ⚡</div>
+      </div>
+      <div class="stats-pills">
+        <div class="pill">
+          <span>VÒNG</span>
+          <b id="hud-laps">1 / 3</b>
+        </div>
+        <div class="pill">
+          <span>TRẠNG THÁI</span>
+          <b id="hud-status" class="status-ready">SẴN SÀNG</b>
+        </div>
+        <div class="pill">
+          <span>TAY ĐUA</span>
+          <b id="hud-queue" style="color: #38bdf8;">0 Xe</b>
+        </div>
+        <button id="btn-sound-toggle" class="pill pill-btn" title="Bật/Tắt âm thanh đua xe">
+          <span>ÂM THANH</span>
+          <b id="hud-sound-text">🔊 BẬT</b>
+        </button>
+      </div>
+    </div>
+
+    <!-- Live Leaderboard Sidebar -->
+    <div class="leaderboard-sidebar" id="leaderboard-box">
+      <div class="lbl-header">🏆 BẢNG THỨ HẠNG</div>
+      <div class="racers-list" id="racers-list">
+        <!-- Rendered dynamically -->
+      </div>
+    </div>
+
+    <!-- Camera view switcher -->
+    <div class="camera-bar" id="camera-bar">
+      <button class="cam-btn active" data-cam="chase">🎥 Bám Top 1</button>
+      <button class="cam-btn" data-cam="fly">🚁 Toàn Cảnh</button>
+      <button class="cam-btn" data-cam="side">🛣️ Góc Bên</button>
+      <button class="cam-btn" data-cam="cockpit">🏎️ Buồng Lái</button>
+      <button class="cam-btn cam-close-btn" id="btn-hide-cam" title="Ẩn thanh góc máy">✕</button>
+    </div>
+
+    <!-- Toggle button to restore camera bar if hidden -->
+    <button class="cam-restore-btn" id="btn-show-cam" title="Hiện thanh góc máy" style="display: none;">🎥</button>
+
+    <!-- Nitro Surge Notification Banner -->
+    <div class="nitro-banner" id="nitro-banner">
+      ⚡ <span id="nitro-user">Khán giả</span> ĐÃ KÍCH HOẠT NITRO PHẢN LỰC! ⚡
+    </div>
+  </div>
+
+  <!-- Winner Podium Modal -->
+  <div class="podium-modal" id="podium-modal">
+    <div class="podium-content">
+      <div class="trophy-icon">🏆</div>
+      <h2 id="winner-title">KẾT THÚC CHẶNG ĐUA!</h2>
+      <div class="podium-grid">
+        <div class="podium-step step-2">
+          <div class="podium-avatar-wrap">
+            <img id="p2-avatar" src="" alt="" />
+            <span class="step-medal">🥈</span>
+          </div>
+          <div class="step-name" id="p2-name">---</div>
+          <div class="step-block">TOP 2</div>
+        </div>
+
+        <div class="podium-step step-1">
+          <div class="podium-avatar-wrap crown-glow">
+            <img id="p1-avatar" src="" alt="" />
+            <span class="step-medal">🥇</span>
+          </div>
+          <div class="step-name" id="p1-name">---</div>
+          <div class="step-block">QUÁN QUÂN</div>
+        </div>
+
+        <div class="podium-step step-3">
+          <div class="podium-avatar-wrap">
+            <img id="p3-avatar" src="" alt="" />
+            <span class="step-medal">🥉</span>
+          </div>
+          <div class="step-name" id="p3-name">---</div>
+          <div class="step-block">TOP 3</div>
+        </div>
+      </div>
+      <div class="podium-countdown" id="podium-next-timer">Chặng tiếp theo sẽ bắt đầu sau: <b>5s</b></div>
+    </div>
+  </div>
+
+  <!-- Three.js CDN -->
+  <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+  <script src="../../overlay.js"></script>
+  <script src="index.js"></script>
+</body>
+</html>

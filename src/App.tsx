@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { MusicPlayer } from './components/MusicPlayer'
 import { FakerBatchModal } from './components/FakerBatchModal'
+import { Welcome3D } from './components/Welcome3D'
 
 interface TemplateOptionField {
   key: string
@@ -292,6 +293,78 @@ export default function App() {
   const [previewClientCounts, setPreviewClientCounts] = useState<Record<string, number>>({})
   const [actionNotice, setActionNotice] = useState<{ text: string; isError?: boolean } | null>(null)
 
+  // Proxy & EulerStream Settings
+  const [showSettingsModal, setShowSettingsModal] = useState(false)
+  const [proxyUrl, setProxyUrl] = useState('')
+  const [signApiKey, setSignApiKey] = useState('')
+  const [signApiUrl, setSignApiUrl] = useState('')
+  const [settingsSavedToast, setSettingsSavedToast] = useState(false)
+  const [eulerUsage, setEulerUsage] = useState<{
+    day?: { max: number; remaining: number; reset_at: string | null }
+    hour?: { max: number; remaining: number; reset_at: string | null }
+    minute?: { max: number; remaining: number; reset_at: string | null }
+    isCustomKey: boolean
+  } | null>(null)
+  const [eulerUsageLoading, setEulerUsageLoading] = useState(false)
+  const [eulerUsageError, setEulerUsageError] = useState<string | null>(null)
+
+  // Cloudflare Public Quick Tunnel
+  const [tunnelUrl, setTunnelUrl] = useState('')
+  const [tunnelLoading, setTunnelLoading] = useState(false)
+  const [copyTunnelToast, setCopyTunnelToast] = useState(false)
+
+  // AI & TTS Assistant State
+  const [aiConfig, setAiConfig] = useState<{
+    enabled: boolean
+    provider: 'openai' | 'gemini' | 'ollama' | 'deepseek' | 'custom' | 'rule_based'
+    apiKey: string
+    baseUrl: string
+    model: string
+    batchInterval: number
+    maxBatchSize: number
+    ttsEnabled: boolean
+    ttsEngine: 'webspeech' | 'google' | 'openai' | 'elevenlabs' | 'custom_remote'
+    ttsVoice: string
+    ttsSpeed: number
+    ttsVolume: number
+    ttsDuckMusic: boolean
+    ttsApiKey: string
+    ttsBaseUrl: string
+    ttsModel: string
+    ttsCustomMethod: 'GET' | 'POST'
+    playInApp: boolean
+    playInObs: boolean
+    templatePrompts: Record<string, string>
+  }>({
+    enabled: true,
+    provider: 'openai',
+    apiKey: '',
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4o-mini',
+    batchInterval: 6,
+    maxBatchSize: 6,
+    ttsEnabled: true,
+    ttsEngine: 'webspeech',
+    ttsVoice: 'vi-VN',
+    ttsSpeed: 1.0,
+    ttsVolume: 1.0,
+    ttsDuckMusic: true,
+    ttsApiKey: '',
+    ttsBaseUrl: 'https://api.openai.com/v1',
+    ttsModel: 'tts-1',
+    ttsCustomMethod: 'POST',
+    playInApp: false,
+    playInObs: true,
+    templatePrompts: {},
+  })
+  const [defaultPrompts, setDefaultPrompts] = useState<Record<string, string>>({})
+  const [settingsModalTab, setSettingsModalTab] = useState<'network' | 'ai' | 'tts' | 'prompts'>('network')
+  const [promptTemplateEditId, setPromptTemplateEditId] = useState<string>('print_booth_3d')
+  const [lastSpokenText, setLastSpokenText] = useState<string>('')
+  const [isSpeakingNow, setIsSpeakingNow] = useState(false)
+  const [testSpeechInput, setTestSpeechInput] = useState('')
+  const [showApiKey, setShowApiKey] = useState(false)
+
   const showNotice = (text: string, isError = false) => {
     setActionNotice({ text, isError })
     setTimeout(() => setActionNotice(null), 3000)
@@ -332,13 +405,17 @@ export default function App() {
     return cleaned
   }
 
-  const refreshSessions = async () => {
-    if (!window.ipcRenderer) return
+  const refreshSessions = async (): Promise<SessionData[]> => {
+    if (!window.ipcRenderer) return []
     const list: SessionData[] = await window.ipcRenderer.invoke('sessions:get-all')
-    setSessions(list || [])
-    if (list && list.length > 0) {
-      setCurrentSessionId((prev) => prev || list[0].id)
+    const final = list || []
+    setSessions(final)
+    if (final.length > 0) {
+      setCurrentSessionId((prev) => (final.some((s) => s.id === prev) ? prev : final[0].id))
+    } else {
+      setCurrentSessionId('')
     }
+    return final
   }
 
   useEffect(() => {
@@ -354,6 +431,23 @@ export default function App() {
 
     window.ipcRenderer.invoke('preview:get-clients').then((counts) => {
       if (counts) setPreviewClientCounts(counts)
+    })
+
+    window.ipcRenderer.invoke('config:get-all').then((cfg: Record<string, string>) => {
+      if (cfg) {
+        if (cfg.proxyUrl) setProxyUrl(cfg.proxyUrl)
+        if (cfg.signApiKey) setSignApiKey(cfg.signApiKey)
+        if (cfg.signApiUrl) setSignApiUrl(cfg.signApiUrl)
+      }
+    })
+
+    window.ipcRenderer.invoke('tunnel:get-status').then((res: any) => {
+      if (res?.url) setTunnelUrl(res.url)
+    })
+
+    window.ipcRenderer.invoke('ai:get-config').then((res: any) => {
+      if (res?.config) setAiConfig(res.config)
+      if (res?.defaultPrompts) setDefaultPrompts(res.defaultPrompts)
     })
 
     refreshSessions()
@@ -443,12 +537,56 @@ export default function App() {
     window.ipcRenderer.on('session:event', handleSessionEvent)
     window.ipcRenderer.on('preview:clients-change', handleClientsChange)
 
+    const handleAiSpeak = (_: any, payload: any) => {
+      if (!payload || !payload.text) return
+      setLastSpokenText(payload.text)
+      setIsSpeakingNow(true)
+
+      // Play audio locally in Electron if enabled
+      if (payload.playInApp !== false) {
+        try {
+          if (payload.engine === 'webspeech' && 'speechSynthesis' in window) {
+            window.speechSynthesis.cancel()
+            const utter = new SpeechSynthesisUtterance(payload.text)
+            utter.lang = 'vi-VN'
+            utter.rate = payload.speed || 1.0
+            utter.volume = typeof payload.volume === 'number' ? payload.volume : 1.0
+            utter.onend = () => setIsSpeakingNow(false)
+            utter.onerror = () => setIsSpeakingNow(false)
+            window.speechSynthesis.speak(utter)
+          } else if (payload.audioUrl) {
+            const audio = new Audio(payload.audioUrl)
+            audio.volume = typeof payload.volume === 'number' ? payload.volume : 1.0
+            audio.playbackRate = payload.speed || 1.0
+            audio.onended = () => setIsSpeakingNow(false)
+            audio.onerror = () => setIsSpeakingNow(false)
+            audio.play().catch(() => {})
+          }
+        } catch (e) {
+          console.warn('In-app TTS error:', e)
+        }
+      }
+
+      setTimeout(() => {
+        setIsSpeakingNow(false)
+      }, Math.max(3500, payload.text.length * 90))
+    }
+
+    window.ipcRenderer.on('ai:speak', handleAiSpeak)
+
     return () => {
       if (flushTimer) clearTimeout(flushTimer)
       window.ipcRenderer?.off('session:event', handleSessionEvent)
       window.ipcRenderer?.off('preview:clients-change', handleClientsChange)
+      window.ipcRenderer?.off('ai:speak', handleAiSpeak)
     }
   }, [])
+
+  useEffect(() => {
+    if (showSettingsModal) {
+      checkEulerUsage()
+    }
+  }, [showSettingsModal])
 
   const getTemplate = (id?: string) => {
     return (
@@ -467,6 +605,9 @@ export default function App() {
   }
 
   const currentTemplate = getTemplate(currentSession?.templateId)
+  const isPrinterTemplate =
+    currentTemplate.id?.includes('print') ||
+    currentTemplate.actions?.some((a) => a.group === 'printer_flow')
 
   // Unified OBS URL: permanent fixed URL for any template
   const getObsUrl = (session?: SessionData) => {
@@ -489,6 +630,156 @@ export default function App() {
       window.ipcRenderer.invoke('preview:open', key)
     } else {
       window.open(getObsUrl(s), '_blank')
+    }
+  }
+
+  // Cloudflare Tunnel & Settings Handlers
+  const handleToggleTunnel = async () => {
+    setTunnelLoading(true)
+    try {
+      const res = await window.ipcRenderer?.invoke('tunnel:toggle')
+      if (res?.url) {
+        setTunnelUrl(res.url)
+        showNotice(`🌐 Đã bật Cloudflare Tunnel: ${res.url}`)
+      } else {
+        setTunnelUrl('')
+        showNotice(res?.error ? `❌ ${res.error}` : 'Đã tắt Cloudflare Tunnel')
+      }
+    } catch (e: any) {
+      showNotice(`❌ Lỗi bật tunnel: ${e.message}`, true)
+    } finally {
+      setTunnelLoading(false)
+    }
+  }
+
+  const getOnlineObsUrl = (session?: SessionData) => {
+    if (!tunnelUrl) return ''
+    const s = session || currentSession
+    const key = s?.streamKey || 'live_default'
+    return `${tunnelUrl}/preview?key=${key}`
+  }
+
+  const copyOnlineObsUrl = (session?: SessionData) => {
+    const url = getOnlineObsUrl(session)
+    if (!url) return
+    navigator.clipboard.writeText(url)
+    setCopyTunnelToast(true)
+    setTimeout(() => setCopyTunnelToast(false), 2000)
+  }
+
+  const checkEulerUsage = async (overrideKey?: string) => {
+    setEulerUsageLoading(true)
+    setEulerUsageError(null)
+    try {
+      const res = await window.ipcRenderer?.invoke('euler:check-usage', {
+        apiKey: overrideKey !== undefined ? overrideKey : signApiKey,
+        apiUrl: signApiUrl,
+      })
+      if (res?.success) {
+        setEulerUsage(res.data)
+      } else {
+        setEulerUsage(null)
+        setEulerUsageError(res?.error || 'Lỗi kiểm tra API')
+      }
+    } catch (err: any) {
+      setEulerUsage(null)
+      setEulerUsageError(err?.message || 'Lỗi kết nối')
+    } finally {
+      setEulerUsageLoading(false)
+    }
+  }
+
+  const handleSaveConfigs = async () => {
+    await window.ipcRenderer?.invoke('config:set', { key: 'proxyUrl', value: proxyUrl.trim() })
+    await window.ipcRenderer?.invoke('config:set', { key: 'signApiKey', value: signApiKey.trim() })
+    await window.ipcRenderer?.invoke('config:set', { key: 'signApiUrl', value: signApiUrl.trim() })
+    setSettingsSavedToast(true)
+    setTimeout(() => setSettingsSavedToast(false), 2000)
+    showNotice('✅ Đã lưu cấu hình Proxy & EulerStream')
+    checkEulerUsage(signApiKey.trim())
+  }
+
+  // AI & TTS Assistant Helper Methods
+  const updateAiConfig = async (partial: Partial<typeof aiConfig>) => {
+    const updated = { ...aiConfig, ...partial }
+    setAiConfig(updated)
+    const res = await window.ipcRenderer?.invoke('ai:update-config', partial)
+    if (res?.config) {
+      setAiConfig(res.config)
+    }
+  }
+
+  const handleTestSpeak = async (customText?: string) => {
+    const textToSpeak = customText || testSpeechInput || 'Xin chào toàn thể anh em đang xem livestream nhé!'
+    showNotice('🔊 Đang phát giọng nói thử nghiệm...')
+    await window.ipcRenderer?.invoke('ai:test-speak', {
+      text: textToSpeak,
+      templateId: currentSession?.templateId || 'print_booth_3d',
+    })
+  }
+
+  const handleResetPrompt = (templateId: string) => {
+    let def = defaultPrompts[templateId]
+    if (!def) {
+      if (templateId === 'default') {
+        def = defaultPrompts['default'] || ''
+      } else {
+        const tmpl = templates.find((t) => t.id === templateId)
+        const tmplName = tmpl?.name || templateId
+        const tmplDesc = tmpl?.description || 'Tương tác trực tiếp với khán giả phòng live'
+        def = `Bạn là AI Bình Luận Viên đồng hành cho trò chơi ${tmplName} trên TikTok Live.
+Nhiệm vụ: ${tmplDesc.slice(0, 100)}.
+Phong cách: Hào hứng, thân thiện, tràn đầy năng lượng, xưng Em gọi Khán giả hoặc tên người xem.
+Quy tắc:
+- Trả lời đúng 1 câu ngắn gọn (dưới 25 từ).
+- Cảm ơn và gọi tên người vừa tặng quà hoặc bình luận nổi bật.
+- Nhắc khán giả thả tim và tương tác để tham gia ${tmplName}.
+- Không lặp lại nguyên văn câu hỏi hay đọc icon rác.`
+      }
+    }
+
+    if (!def) return
+    updateAiConfig({
+      templatePrompts: {
+        ...aiConfig.templatePrompts,
+        [templateId]: def,
+      },
+    })
+    showNotice(`✅ Đã khôi phục kịch bản mặc định cho "${templateId}"`)
+  }
+
+  const getPersonaInfo = (templateId?: string) => {
+    if (!templateId || templateId === 'default') {
+      return {
+        icon: '💬',
+        badge: 'Trợ Lý Chat Chung',
+        desc: 'Giao lưu trò chuyện tự nhiên, phản hồi dí dỏm với khán giả',
+        border: 'border-slate-700 bg-slate-900/60 text-slate-300',
+      }
+    }
+
+    const tmpl = templates.find((t) => t.id === templateId)
+    if (tmpl) {
+      let border = 'border-cyan-500/40 bg-cyan-950/30 text-cyan-300'
+      const id = tmpl.id.toLowerCase()
+      if (id.includes('racing')) border = 'border-amber-500/40 bg-amber-950/30 text-amber-300'
+      else if (id.includes('fish')) border = 'border-sky-500/40 bg-sky-950/30 text-sky-300'
+      else if (id.includes('plinko')) border = 'border-indigo-500/40 bg-indigo-950/30 text-indigo-300'
+      else if (id.includes('pha_che') || id.includes('bar')) border = 'border-emerald-500/40 bg-emerald-950/30 text-emerald-300'
+
+      return {
+        icon: tmpl.icon || '🎮',
+        badge: tmpl.name,
+        desc: tmpl.description ? tmpl.description.slice(0, 85) + '...' : 'Tương tác theo sự kiện của template',
+        border,
+      }
+    }
+
+    return {
+      icon: '🎮',
+      badge: templateId,
+      desc: 'Tương tác theo sự kiện phòng live',
+      border: 'border-slate-800 bg-slate-950 text-slate-400',
     }
   }
 
@@ -519,11 +810,24 @@ export default function App() {
   const handleDeleteSession = async (id: string, name: string) => {
     if (confirm(`Bạn có chắc muốn xóa phiên live "${name}"?`)) {
       await window.ipcRenderer?.invoke('sessions:delete', id)
-      await refreshSessions()
-      if (currentSessionId === id) {
-        const remaining = sessions.filter((s) => s.id !== id)
-        if (remaining.length > 0) setCurrentSessionId(remaining[0].id)
+      const list = await refreshSessions()
+      if (list.length === 0) {
+        setCurrentSessionId('')
+        setViewMode('sessions')
+      } else if (currentSessionId === id) {
+        setCurrentSessionId(list[0].id)
       }
+      showNotice(`🗑️ Đã xóa phiên "${name}"`)
+    }
+  }
+
+  const handleDeleteAllSessions = async () => {
+    if (confirm('CẢNH BÁO: Bạn có chắc chắn muốn xóa TẤT CẢ các phiên live stream hiện có?')) {
+      await window.ipcRenderer?.invoke('sessions:delete-all')
+      await refreshSessions()
+      setCurrentSessionId('')
+      setViewMode('sessions')
+      showNotice('🗑️ Đã xóa toàn bộ phiên live stream')
     }
   }
 
@@ -646,110 +950,170 @@ export default function App() {
 
   return (
     <div className='flex h-screen flex-col overflow-hidden bg-slate-950 text-slate-100 font-sans'>
-      {/* ==================== TOP NAVIGATION ==================== */}
-      <header className='flex h-16 shrink-0 items-center justify-between border-b border-slate-800/80 bg-slate-900/95 px-6 backdrop-blur'>
-        <div className='flex items-center gap-3'>
-          <div className='flex h-9 w-9 items-center justify-center rounded-xl bg-linear-to-tr from-cyan-500 to-blue-600 font-black text-white shadow-lg shadow-cyan-500/25'>
+      {/* ==================== COMPACT HEADER ==================== */}
+      <header className='flex h-14 shrink-0 items-center justify-between border-b border-slate-800/80 bg-slate-900/95 px-4 backdrop-blur gap-3'>
+        {/* Left: Brand & Template Pill */}
+        <div className='flex items-center gap-2.5 shrink-0'>
+          <div className='flex h-8 w-8 items-center justify-center rounded-lg bg-linear-to-tr from-cyan-500 to-blue-600 font-black text-xs text-white shadow-md shadow-cyan-500/20'>
             3D
           </div>
-          <div>
-            <h1 className='text-sm font-bold tracking-tight text-white flex items-center gap-2'>
-              TIKTOK LIVE MULTI-TEMPLATES
-              <span className='rounded bg-cyan-950 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-400 border border-cyan-800/50'>
-                {currentTemplate?.name}
-              </span>
-            </h1>
-            <p className='text-[11px] text-slate-400'>
-              Hệ thống điều khiển tương tác trực tiếp theo từng giao diện Template
-            </p>
+          <div className='flex items-center gap-2'>
+            <span className='text-xs font-bold tracking-tight text-white hidden sm:inline'>TIKTOK LIVE</span>
+            <span className='rounded bg-cyan-950 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-400 border border-cyan-800/50 max-w-[150px] truncate'>
+              {currentTemplate?.name}
+            </span>
           </div>
         </div>
 
-        {/* View Switcher / Session Selector */}
-        <div className='flex items-center gap-3'>
-          <div className='flex items-center gap-2 rounded-xl bg-slate-950 px-3 py-1.5 border border-slate-800'>
-            <span className='text-xs text-slate-400'>Phiên:</span>
-            <select
-              value={currentSession?.id || ''}
-              onChange={(e) => {
-                setCurrentSessionId(e.target.value)
-                setViewMode('control')
-              }}
-              className='bg-transparent text-xs font-bold text-cyan-300 focus:outline-none cursor-pointer'
-            >
-              {sessions.map((s) => (
-                <option key={s.id} value={s.id} className='bg-slate-900 text-white'>
-                  {s.status === 'running' ? '🟢' : '⚪'} {getTemplate(s.templateId)?.icon} {s.name} ({s.streamKey})
-                </option>
-              ))}
-            </select>
+        {/* Center: Session selector & View Switcher */}
+        <div className='flex items-center gap-2 shrink-0'>
+          <div className='flex items-center gap-1.5 rounded-lg bg-slate-950 px-2 py-1 border border-slate-800 text-xs'>
+            <span className='text-slate-400 text-[11px]'>Phiên:</span>
+            {sessions.length > 0 ? (
+              <select
+                value={currentSession?.id || ''}
+                onChange={(e) => {
+                  setCurrentSessionId(e.target.value)
+                  setViewMode('control')
+                }}
+                className='bg-transparent text-xs font-bold text-cyan-300 focus:outline-none cursor-pointer max-w-[130px] truncate'
+              >
+                {sessions.map((s) => (
+                  <option key={s.id} value={s.id} className='bg-slate-900 text-white'>
+                    {s.status === 'running' ? '🟢' : '⚪'} {getTemplate(s.templateId)?.icon} {s.name}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span className='text-[11px] font-semibold text-slate-500 italic'>Chưa có phiên</span>
+            )}
           </div>
 
-          <div className='flex items-center gap-1.5 rounded-xl bg-slate-950 p-1 border border-slate-800'>
+          <div className='flex items-center gap-1 rounded-lg bg-slate-950 p-0.5 border border-slate-800 text-xs'>
             <button
-              onClick={() => setViewMode('control')}
-              className={`rounded-lg px-3 py-1 text-xs font-semibold transition ${
+              onClick={() => {
+                if (currentSession) {
+                  setViewMode('control')
+                } else {
+                  setViewMode('sessions')
+                }
+              }}
+              className={`rounded px-2.5 py-1 text-xs font-semibold transition ${
                 viewMode === 'control'
                   ? 'bg-cyan-500 text-slate-950 shadow-sm'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
-              🎮 Điều khiển Live
+              🎮 Điều khiển
             </button>
             <button
               onClick={() => setViewMode('sessions')}
-              className={`rounded-lg px-3 py-1 text-xs font-semibold transition ${
+              className={`rounded px-2.5 py-1 text-xs font-semibold transition ${
                 viewMode === 'sessions'
                   ? 'bg-cyan-500 text-slate-950 shadow-sm'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
-              📑 Danh sách phiên ({sessions.length})
+              📑 Phiên ({sessions.length})
             </button>
             <button
               onClick={() => setViewMode('create')}
-              className={`rounded-lg px-3 py-1 text-xs font-semibold transition ${
+              className={`rounded px-2.5 py-1 text-xs font-semibold transition ${
                 viewMode === 'create'
                   ? 'bg-cyan-500 text-slate-950 shadow-sm'
                   : 'text-cyan-400 hover:text-cyan-300'
               }`}
             >
-              + Tạo phiên mới
+              + Mới
             </button>
           </div>
         </div>
 
-        {/* Quick OBS Action */}
-        <div className='flex items-center gap-2'>
+        {/* Right: Quick actions */}
+        <div className='flex items-center gap-1.5 shrink-0'>
+          {/* Cloudflare Tunnel Toggle */}
+          <button
+            onClick={handleToggleTunnel}
+            disabled={tunnelLoading}
+            className={`flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-semibold transition cursor-pointer ${
+              tunnelUrl
+                ? 'border-emerald-500/50 bg-emerald-950/60 text-emerald-300 hover:bg-emerald-900/60'
+                : 'border-slate-800 bg-slate-900/80 text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+            title={tunnelUrl ? `Tunnel đang bật: ${tunnelUrl}` : 'Bật Cloudflare Tunnel tạo link OBS online'}
+          >
+            <span>{tunnelLoading ? '⏳' : tunnelUrl ? '🌐' : '⚪'}</span>
+            <span>{tunnelLoading ? 'Đang bật...' : tunnelUrl ? 'Tunnel' : 'Tunnel'}</span>
+          </button>
+
+          {tunnelUrl && (
+            <button
+              onClick={() => copyOnlineObsUrl()}
+              className='flex items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/20 px-2 py-1 text-xs font-bold text-emerald-300 hover:bg-emerald-500/30 transition cursor-pointer'
+              title='Chép link OBS online'
+            >
+              <span>{copyTunnelToast ? '✅ Đã chép' : '📋 Link Online'}</span>
+            </button>
+          )}
+
+          {/* Proxy & Network Settings */}
+          <button
+            onClick={() => setShowSettingsModal(true)}
+            className='flex items-center gap-1 rounded-lg border border-slate-800 bg-slate-900/80 px-2.5 py-1 text-xs font-semibold text-slate-300 transition hover:bg-slate-800 hover:text-white cursor-pointer'
+            title='Cài đặt danh sách Proxy & EulerStream Key'
+          >
+            <span>⚙️ Proxy</span>
+            {proxyUrl && <span className='h-1.5 w-1.5 rounded-full bg-cyan-400' />}
+          </button>
+
+          {/* Copy Localhost OBS URL */}
           <button
             onClick={() => copyObsUrl()}
-            className='flex items-center gap-1.5 rounded-xl border border-cyan-500/40 bg-cyan-950/50 px-3.5 py-1.5 text-xs font-semibold text-cyan-300 transition hover:bg-cyan-900/60'
+            className='flex items-center gap-1 rounded-lg border border-cyan-500/40 bg-cyan-950/50 px-2.5 py-1 text-xs font-semibold text-cyan-300 transition hover:bg-cyan-900/60 cursor-pointer'
           >
-            {copyToast ? '✅ Đã chép link OBS' : '📋 Chép Link OBS'}
+            {copyToast ? '✅ Đã chép' : '📋 Link OBS'}
           </button>
         </div>
       </header>
 
       {/* ==================== BODY CONTENT ==================== */}
       <div className='flex flex-1 overflow-hidden'>
-        {/* VIEW 1: QUẢN LÝ DANH SÁCH CÁC PHIÊN LIVE */}
-        {viewMode === 'sessions' && (
-          <div className='flex-1 overflow-y-auto p-8'>
-            <div className='mx-auto max-w-5xl space-y-6'>
-              <div className='flex items-center justify-between border-b border-slate-800 pb-4'>
-                <div>
-                  <h2 className='text-lg font-bold text-white'>Danh Sách Các Phiên Live Stream</h2>
-                  <p className='text-xs text-slate-400'>
-                    Mỗi phiên được cố định một mẫu Template riêng biệt và link OBS `/preview?key=...` thống nhất
-                  </p>
+        {/* VIEW 1: QUẢN LÝ DANH SÁCH CÁC PHIÊN LIVE HOẶC WELCOME 3D */}
+        {viewMode === 'sessions' &&
+          (sessions.length === 0 ? (
+            <Welcome3D
+              onOpenCreate={(tmplId) => {
+                if (tmplId) setSelectedTemplateId(tmplId)
+                setViewMode('create')
+              }}
+              onOpenSettings={() => setShowSettingsModal(true)}
+            />
+          ) : (
+            <div className='flex-1 overflow-y-auto p-8'>
+              <div className='mx-auto max-w-5xl space-y-6'>
+                <div className='flex items-center justify-between border-b border-slate-800 pb-4'>
+                  <div>
+                    <h2 className='text-lg font-bold text-white'>Danh Sách Các Phiên Live Stream</h2>
+                    <p className='text-xs text-slate-400'>
+                      Mỗi phiên được cố định một mẫu Template riêng biệt và link OBS `/preview?key=...` thống nhất
+                    </p>
+                  </div>
+                  <div className='flex items-center gap-2'>
+                    <button
+                      onClick={handleDeleteAllSessions}
+                      className='rounded-xl border border-red-500/30 bg-red-950/20 px-3 py-2 text-xs font-semibold text-red-400 hover:bg-red-950/50 hover:border-red-500/60 transition cursor-pointer'
+                      title='Xóa sạch tất cả các phiên live'
+                    >
+                      🗑️ Xóa Tất Cả
+                    </button>
+                    <button
+                      onClick={() => setViewMode('create')}
+                      className='rounded-xl bg-cyan-500 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-cyan-400 transition cursor-pointer'
+                    >
+                      + Tạo Phiên Live Mới
+                    </button>
+                  </div>
                 </div>
-                <button
-                  onClick={() => setViewMode('create')}
-                  className='rounded-xl bg-cyan-500 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-cyan-400 transition'
-                >
-                  + Tạo Phiên Live Mới
-                </button>
-              </div>
 
               <div className='grid gap-4 md:grid-cols-2'>
                 {sessions.map((s) => {
@@ -824,19 +1188,17 @@ export default function App() {
                               setCurrentSessionId(s.id)
                               setViewMode('control')
                             }}
-                            className='rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-cyan-500'
+                            className='rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-cyan-500 cursor-pointer'
                           >
                             Vào điều khiển 🎮
                           </button>
-                          {sessions.length > 1 && (
-                            <button
-                              onClick={() => handleDeleteSession(s.id, s.name)}
-                              className='rounded-lg border border-red-500/30 p-1.5 text-xs text-red-400 hover:bg-red-950/40'
-                              title='Xóa phiên này'
-                            >
-                              🗑️
-                            </button>
-                          )}
+                          <button
+                            onClick={() => handleDeleteSession(s.id, s.name)}
+                            className='rounded-lg border border-red-500/30 p-1.5 text-xs text-red-400 hover:bg-red-950/40 hover:border-red-500 transition cursor-pointer'
+                            title='Xóa phiên này'
+                          >
+                            🗑️
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -845,100 +1207,187 @@ export default function App() {
               </div>
             </div>
           </div>
-        )}
+        ))}
 
-        {/* VIEW 2: TẠO PHIÊN MỚI */}
+        {/* VIEW 2: TẠO PHIÊN MỚI (FULL WIDTH 2 CỘT) */}
         {viewMode === 'create' && (
-          <div className='flex-1 overflow-y-auto p-8'>
-            <div className='mx-auto max-w-2xl space-y-6 rounded-2xl border border-slate-800 bg-slate-900/80 p-6 shadow-xl'>
-              <div>
-                <h2 className='text-lg font-bold text-white'>Tạo Phiên Live Stream Mới</h2>
-                <p className='text-xs text-slate-400'>
-                  Chọn mẫu template tương tác cố định cho phiên live này
-                </p>
+          <div className='flex-1 overflow-hidden p-6 flex flex-col'>
+            <div className='w-full max-w-7xl mx-auto flex flex-col flex-1 overflow-hidden space-y-4'>
+              <div className='flex items-center justify-between border-b border-slate-800 pb-3 shrink-0'>
+                <div>
+                  <h2 className='text-lg font-bold text-white flex items-center gap-2'>
+                    <span>✨</span>
+                    <span>Tạo Phiên Live Stream Mới</span>
+                  </h2>
+                  <p className='text-xs text-slate-400'>
+                    Chọn mẫu template 3D tương tác bên trái và điền thông tin phiên ở cột bên phải
+                  </p>
+                </div>
+                <button
+                  type='button'
+                  onClick={() => setViewMode('sessions')}
+                  className='rounded-xl border border-slate-800 bg-slate-900/80 px-3.5 py-1.5 text-xs font-semibold text-slate-300 hover:bg-slate-800 hover:text-white transition cursor-pointer'
+                >
+                  ✕ Đóng / Quay lại
+                </button>
               </div>
 
-              <form onSubmit={handleCreateSession} className='space-y-5'>
-                <div className='space-y-2'>
-                  <label className='block text-xs font-bold uppercase tracking-wider text-slate-300'>
-                    1. Chọn Mẫu Template Live Stream (Cố định sau khi tạo)
-                  </label>
-                  <div className='grid gap-3 sm:grid-cols-2'>
-                    {templates.map((tmpl) => (
-                      <div
-                        key={tmpl.id}
-                        onClick={() => setSelectedTemplateId(tmpl.id)}
-                        className={`cursor-pointer rounded-2xl border p-4 transition ${
-                          selectedTemplateId === tmpl.id
-                            ? 'border-cyan-400 bg-cyan-950/40 shadow-lg shadow-cyan-500/10'
-                            : 'border-slate-800 bg-slate-950 hover:border-slate-700'
-                        }`}
-                      >
-                        <div className='flex items-center justify-between mb-2'>
-                          <span className='text-3xl'>{tmpl.icon}</span>
-                          <span className='rounded bg-slate-800 px-2 py-0.5 text-[10px] font-bold text-cyan-400 border border-slate-700'>
-                            {tmpl.badge}
-                          </span>
-                        </div>
-                        <h4 className='text-sm font-bold text-white'>{tmpl.name}</h4>
-                        <p className='text-xs text-slate-400 mt-1 line-clamp-2'>{tmpl.description}</p>
-                        <div className='mt-3 flex flex-wrap gap-1'>
-                          {tmpl.features.slice(0, 3).map((f, i) => (
-                            <span key={i} className='rounded bg-slate-900 px-1.5 py-0.5 text-[9px] text-slate-400'>
-                              ✓ {f}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className='space-y-1.5'>
-                  <label className='block text-xs font-bold uppercase tracking-wider text-slate-300'>
-                    2. Tên Phiên Live
-                  </label>
-                  <input
-                    type='text'
-                    required
-                    value={newSessionName}
-                    onChange={(e) => setNewSessionName(e.target.value)}
-                    placeholder='Ví dụ: Ca sáng - Máy in 3D, Vòng quay may mắn...'
-                    className='w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm text-white focus:border-cyan-500 focus:outline-none'
-                  />
-                </div>
-
-                <div className='space-y-1.5'>
-                  <div className='flex items-center justify-between'>
-                    <label className='block text-xs font-bold uppercase tracking-wider text-slate-300'>
-                      3. TikTok @username hoặc Link phòng Live
+              {/* 2-Column Split: Left (Templates Grid with Scroll), Right (Form Input) */}
+              <form onSubmit={handleCreateSession} className='flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 min-h-0 overflow-hidden'>
+                {/* CỘT TRÁI: CHỌN TEMPLATES (2 ITEM 1 DÒNG, MAX HEIGHT SCROLL) */}
+                <div className='lg:col-span-7 xl:col-span-8 flex flex-col min-h-0 overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-900/60 p-4'>
+                  <div className='flex items-center justify-between pb-3 mb-3 border-b border-slate-800/80 shrink-0'>
+                    <label className='text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5'>
+                      <span className='inline-flex items-center justify-center w-5 h-5 rounded-full bg-cyan-950 text-cyan-400 text-[10px] font-black border border-cyan-800/60'>1</span>
+                      <span>Chọn Mẫu Template Live Stream ({templates.length} mẫu có sẵn)</span>
                     </label>
-                    <span className='text-[10px] text-cyan-400'>(Không bắt buộc, nhập sau được)</span>
+                    <span className='text-[11px] text-cyan-400 font-medium'>
+                      Đang chọn: <strong>{getTemplate(selectedTemplateId)?.name}</strong>
+                    </span>
                   </div>
-                  <input
-                    type='text'
-                    value={newSessionUser}
-                    onChange={(e) => setNewSessionUser(e.target.value)}
-                    placeholder='Ví dụ: em.th5031 hoặc để trống rồi dán sau khi bắt đầu live...'
-                    className='w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm text-white focus:border-cyan-500 focus:outline-none'
-                  />
+
+                  {/* Scrollable Templates Grid (2 item / dòng) */}
+                  <div className='flex-1 overflow-y-auto pr-2 grid grid-cols-1 sm:grid-cols-2 gap-3.5 max-h-[calc(100vh-230px)]'>
+                    {templates.map((tmpl) => {
+                      const isSelected = selectedTemplateId === tmpl.id
+                      return (
+                        <div
+                          key={tmpl.id}
+                          onClick={() => setSelectedTemplateId(tmpl.id)}
+                          className={`cursor-pointer rounded-2xl border p-4.5 transition-all duration-200 relative flex flex-col justify-between ${
+                            isSelected
+                              ? 'border-cyan-400 bg-cyan-950/40 shadow-xl shadow-cyan-500/10 ring-1 ring-cyan-400/50'
+                              : 'border-slate-800/90 bg-slate-950/80 hover:border-slate-700 hover:bg-slate-900/60'
+                          }`}
+                        >
+                          <div>
+                            <div className='flex items-center justify-between mb-2.5'>
+                              <span className='text-3xl'>{tmpl.icon}</span>
+                              <div className='flex items-center gap-1.5'>
+                                {isSelected && (
+                                  <span className='rounded-full bg-cyan-500 text-slate-950 px-2 py-0.5 text-[9.5px] font-extrabold uppercase shadow-sm'>
+                                    ✓ Đã chọn
+                                  </span>
+                                )}
+                                <span className='rounded-lg bg-slate-800/80 px-2 py-0.5 text-[10px] font-bold text-cyan-400 border border-slate-700'>
+                                  {tmpl.badge}
+                                </span>
+                              </div>
+                            </div>
+                            <h4 className='text-sm font-bold text-white group-hover:text-cyan-300 transition-colors'>
+                              {tmpl.name}
+                            </h4>
+                            <p className='text-xs text-slate-400 mt-1 line-clamp-2 leading-relaxed'>
+                              {tmpl.description}
+                            </p>
+                          </div>
+
+                          <div className='mt-3.5 pt-2.5 border-t border-slate-800/60 flex flex-wrap gap-1'>
+                            {tmpl.features.slice(0, 3).map((f, i) => (
+                              <span key={i} className='rounded-md bg-slate-900/90 px-1.5 py-0.5 text-[9.5px] text-slate-400 border border-slate-800/60'>
+                                ✓ {f}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
                 </div>
 
-                <div className='flex justify-end gap-3 pt-4 border-t border-slate-800'>
-                  <button
-                    type='button'
-                    onClick={() => setViewMode('sessions')}
-                    className='rounded-xl border border-slate-700 px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white'
-                  >
-                    Hủy
-                  </button>
-                  <button
-                    type='submit'
-                    disabled={isSubmitting}
-                    className='rounded-xl bg-cyan-500 px-6 py-2.5 text-xs font-bold text-slate-950 hover:bg-cyan-400 shadow-lg shadow-cyan-500/20'
-                  >
-                    {isSubmitting ? 'Đang tạo...' : 'Tạo Phiên Mới 🚀'}
-                  </button>
+                {/* CỘT PHẢI: NHẬP THÔNG TIN PHIÊN */}
+                <div className='lg:col-span-5 xl:col-span-4 flex flex-col justify-between rounded-2xl border border-slate-800/80 bg-slate-900/80 p-5 shadow-xl space-y-4 overflow-y-auto max-h-[calc(100vh-230px)]'>
+                  <div className='space-y-4'>
+                    <div className='pb-3 border-b border-slate-800/80'>
+                      <label className='text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5'>
+                        <span className='inline-flex items-center justify-center w-5 h-5 rounded-full bg-cyan-950 text-cyan-400 text-[10px] font-black border border-cyan-800/60'>2</span>
+                        <span>Thông Tin Phiên Live Stream</span>
+                      </label>
+                      <p className='text-[11px] text-slate-400 mt-1'>
+                        Điền tên nhận diện và tài khoản TikTok phát sóng
+                      </p>
+                    </div>
+
+                    {/* Template Summary Card */}
+                    {(() => {
+                      const cur = getTemplate(selectedTemplateId)
+                      return (
+                        <div className='rounded-xl border border-cyan-500/30 bg-cyan-950/25 p-3 flex items-center gap-3'>
+                          <span className='text-2xl p-2 rounded-lg bg-cyan-950/80 border border-cyan-800/60'>
+                            {cur?.icon}
+                          </span>
+                          <div className='flex-1 min-w-0'>
+                            <div className='text-[10px] text-cyan-400 font-semibold uppercase tracking-wider'>
+                              Template sẽ sử dụng
+                            </div>
+                            <div className='text-xs font-bold text-white truncate'>
+                              {cur?.name}
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })()}
+
+                    {/* Field 1: Tên phiên */}
+                    <div className='space-y-1.5'>
+                      <label className='block text-xs font-bold text-slate-300'>
+                        Tên Phiên Live <span className='text-rose-400'>*</span>
+                      </label>
+                      <input
+                        type='text'
+                        required
+                        value={newSessionName}
+                        onChange={(e) => setNewSessionName(e.target.value)}
+                        placeholder='Ví dụ: Ca tối - Đua xe Grand Prix, Máy in 3D...'
+                        className='w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:border-cyan-500 focus:outline-none transition'
+                      />
+                    </div>
+
+                    {/* Field 2: TikTok Username */}
+                    <div className='space-y-1.5'>
+                      <div className='flex items-center justify-between'>
+                        <label className='block text-xs font-bold text-slate-300'>
+                          TikTok @username
+                        </label>
+                        <span className='text-[10px] text-slate-500'>(Tùy chọn, điền sau được)</span>
+                      </div>
+                      <div className='relative'>
+                        <span className='absolute left-3.5 top-2.5 text-slate-500 text-xs font-mono'>@</span>
+                        <input
+                          type='text'
+                          value={newSessionUser}
+                          onChange={(e) => setNewSessionUser(e.target.value)}
+                          placeholder='username (ví dụ: no1kalista)'
+                          className='w-full rounded-xl border border-slate-700 bg-slate-950 pl-8 pr-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:border-cyan-500 focus:outline-none font-mono transition'
+                        />
+                      </div>
+                      <p className='text-[10px] text-slate-500'>
+                        Hệ thống sẽ tự động quét trạng thái phòng live khi bấm Bắt đầu.
+                      </p>
+                    </div>
+
+                    <div className='rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-[11px] text-slate-400 leading-relaxed'>
+                      💡 <strong className='text-slate-300'>Lưu ý:</strong> Mẫu template và Link nguồn OBS Browser Source được tạo sẽ gắn cố định với phiên này để không phải cấu hình lại OBS giữa các buổi live.
+                    </div>
+                  </div>
+
+                  {/* Submit / Cancel Buttons */}
+                  <div className='pt-3 border-t border-slate-800/80 flex items-center justify-end gap-2.5'>
+                    <button
+                      type='button'
+                      onClick={() => setViewMode('sessions')}
+                      className='rounded-xl border border-slate-700 px-4 py-2.5 text-xs font-semibold text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer'
+                    >
+                      Hủy
+                    </button>
+                    <button
+                      type='submit'
+                      disabled={isSubmitting}
+                      className='cursor-pointer rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-6 py-2.5 text-xs font-bold text-white hover:from-cyan-400 hover:to-blue-500 shadow-lg shadow-cyan-500/20 active:scale-95 transition disabled:opacity-50'
+                    >
+                      {isSubmitting ? 'Đang tạo...' : 'Tạo Phiên Mới 🚀'}
+                    </button>
+                  </div>
                 </div>
               </form>
             </div>
@@ -1063,10 +1512,105 @@ export default function App() {
               </div>
             </div>
 
+            {/* AI & TTS LIVE ASSISTANT CONTROL BAR */}
+            {(() => {
+              const persona = getPersonaInfo(currentSession.templateId)
+              return (
+                <div className='mx-4 mt-2.5 rounded-xl border border-slate-800 bg-slate-900/90 px-3.5 py-2 flex flex-wrap items-center justify-between gap-3 shadow-sm'>
+                  {/* Left: Toggles & Persona Badge */}
+                  <div className='flex items-center gap-2.5 flex-wrap'>
+                    <div className='flex items-center gap-1.5'>
+                      <button
+                        type='button'
+                        onClick={() => updateAiConfig({ enabled: !aiConfig.enabled })}
+                        className={`rounded-lg px-2.5 py-1 text-xs font-bold transition flex items-center gap-1.5 border cursor-pointer ${
+                          aiConfig.enabled
+                            ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 shadow-xs'
+                            : 'bg-slate-950 text-slate-500 border-slate-800'
+                        }`}
+                        title={aiConfig.enabled ? 'Nhấn để tắt AI tự động' : 'Nhấn để bật AI tự động'}
+                      >
+                        <span className={`h-2 w-2 rounded-full ${aiConfig.enabled ? 'bg-cyan-400 animate-pulse' : 'bg-slate-600'}`} />
+                        <span>🤖 AI: {aiConfig.enabled ? 'BẬT' : 'TẮT'}</span>
+                      </button>
+
+                      <button
+                        type='button'
+                        onClick={() => updateAiConfig({ ttsEnabled: !aiConfig.ttsEnabled })}
+                        className={`rounded-lg px-2.5 py-1 text-xs font-bold transition flex items-center gap-1.5 border cursor-pointer ${
+                          aiConfig.ttsEnabled
+                            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-xs'
+                            : 'bg-slate-950 text-slate-500 border-slate-800'
+                        }`}
+                        title={aiConfig.ttsEnabled ? 'Nhấn để tắt giọng đọc TTS' : 'Nhấn để bật giọng đọc TTS'}
+                      >
+                        <span className={`h-2 w-2 rounded-full ${aiConfig.ttsEnabled ? 'bg-emerald-400' : 'bg-slate-600'}`} />
+                        <span>🔊 TTS: {aiConfig.ttsEnabled ? 'BẬT' : 'TẮT'}</span>
+                      </button>
+                    </div>
+
+                    {/* Persona Badge for this template */}
+                    <div className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold ${persona.border}`}>
+                      <span>{persona.icon}</span>
+                      <span>{persona.badge}</span>
+                      <span className='hidden xl:inline text-[10px] opacity-80'>· {persona.desc}</span>
+                    </div>
+                  </div>
+
+                  {/* Center: Live Speech / Status animation */}
+                  <div className='flex-1 min-w-[200px] flex items-center justify-center'>
+                    {isSpeakingNow ? (
+                      <div className='flex items-center gap-2 rounded-lg bg-emerald-950/60 border border-emerald-500/40 px-3 py-1 text-xs text-emerald-300 animate-pulse'>
+                        <span className='text-sm'>🗣️</span>
+                        <span className='font-bold'>Đang nói:</span>
+                        <span className='italic font-medium text-white truncate max-w-xs md:max-w-md'>"{lastSpokenText}"</span>
+                      </div>
+                    ) : (
+                      <div className='flex items-center gap-1.5 text-xs text-slate-400'>
+                        <span className='h-1.5 w-1.5 rounded-full bg-slate-500' />
+                        <span className='text-[11px]'>
+                          {aiConfig.enabled
+                            ? `AI đang gom chat mỗi ${aiConfig.batchInterval || 6}s để tương tác...`
+                            : 'AI đang tạm tắt (nhấn nút Bật AI phía trên)'}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Right: Quick Test & Edit Prompt Button */}
+                  <div className='flex items-center gap-2'>
+                    <button
+                      type='button'
+                      onClick={() => handleTestSpeak()}
+                      className='rounded-lg border border-slate-800 bg-slate-950 hover:bg-slate-800 px-2.5 py-1 text-xs font-semibold text-slate-300 hover:text-white transition flex items-center gap-1 cursor-pointer'
+                      title='Phát thử 1 câu mẫu tương ứng với template hiện tại'
+                    >
+                      <span>🗣️</span>
+                      <span>Nói thử</span>
+                    </button>
+
+                    <button
+                      type='button'
+                      onClick={() => {
+                        setPromptTemplateEditId(currentSession.templateId)
+                        setSettingsModalTab('prompts')
+                        setShowSettingsModal(true)
+                      }}
+                      className='rounded-lg border border-indigo-500/40 bg-indigo-950/40 hover:bg-indigo-900/50 px-2.5 py-1 text-xs font-semibold text-indigo-300 transition flex items-center gap-1 cursor-pointer'
+                      title='Mở trình soạn thảo Kịch bản / Prompt cho template này'
+                    >
+                      <span>📝</span>
+                      <span>Sửa Kịch Bản</span>
+                    </button>
+                  </div>
+                </div>
+              )
+            })()}
+
             {/* Panels (3 columns) */}
             <div className='grid flex-1 grid-cols-1 gap-4 overflow-y-auto p-4 lg:grid-cols-12 lg:overflow-hidden'>
               {/* CỘT 1: OPTIONS & ACTIONS THEO ĐÚNG TEMPLATE (4 cols) */}
-              <div className='flex flex-col gap-4 lg:col-span-4 lg:overflow-y-auto pr-1'>
+              <div className='flex flex-col gap-4 lg:col-span-4 lg:overflow-y-auto dark-scroll pr-1'>
                 {/* 1.1: BẢNG ĐIỀU KHIỂN ĐỘNG THEO SCHEMA CỦA TEMPLATE */}
                 <div className='rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-md space-y-4'>
                   <div className='flex items-center justify-between border-b border-slate-800 pb-2.5'>
@@ -1166,64 +1710,88 @@ export default function App() {
                           </button>
                         ))}
 
-                      {/* General Action Buttons with ACTIVE State Highlighting */}
-                      <div className='grid grid-cols-2 gap-2'>
-                        {/* Play/Pause Button */}
-                        <button
-                          onClick={() => {
-                            const newPaused = !currentSession.settings.paused
-                            updateSettingField('paused', newPaused)
-                            sendAction(newPaused ? 'pause' : 'play', undefined, newPaused ? 'Tạm dừng máy in' : 'Tiếp tục in')
-                          }}
-                          className={`rounded-xl py-2 text-xs font-bold transition flex items-center justify-center gap-1.5 border cursor-pointer ${
-                            currentSession.settings.paused
-                              ? 'border-amber-400 bg-amber-500/25 text-amber-300 shadow-md shadow-amber-500/20'
-                              : 'border-emerald-500/30 bg-emerald-600 text-white hover:bg-emerald-500'
-                          }`}
-                        >
-                          <span>{currentSession.settings.paused ? '▶️ Tiếp tục in' : '⏸️ Tạm dừng'}</span>
-                        </button>
+                      {/* Action Buttons: Printer Flow or Template Actions */}
+                      {isPrinterTemplate ? (
+                        <div className='grid grid-cols-2 gap-2'>
+                          {/* Play/Pause Button */}
+                          <button
+                            onClick={() => {
+                              const newPaused = !currentSession.settings.paused
+                              updateSettingField('paused', newPaused)
+                              sendAction(newPaused ? 'pause' : 'play', undefined, newPaused ? 'Tạm dừng máy in' : 'Tiếp tục in')
+                            }}
+                            className={`rounded-xl py-2 text-xs font-bold transition flex items-center justify-center gap-1.5 border cursor-pointer ${
+                              currentSession.settings.paused
+                                ? 'border-amber-400 bg-amber-500/25 text-amber-300 shadow-md shadow-amber-500/20'
+                                : 'border-emerald-500/30 bg-emerald-600 text-white hover:bg-emerald-500'
+                            }`}
+                          >
+                            <span>{currentSession.settings.paused ? '▶️ Tiếp tục in' : '⏸️ Tạm dừng'}</span>
+                          </button>
 
-                        {/* Turbo Button */}
-                        <button
-                          onClick={() => {
-                            const newTurbo = !currentSession.settings.turbo
-                            updateSettingField('turbo', newTurbo)
-                            sendAction('turbo', newTurbo, newTurbo ? 'Bật Turbo ×3' : 'Tắt Turbo')
-                          }}
-                          className={`rounded-xl py-2 text-xs font-bold transition flex items-center justify-center gap-1.5 border cursor-pointer ${
-                            currentSession.settings.turbo
-                              ? 'border-amber-400 bg-amber-500 text-slate-950 font-black shadow-lg shadow-amber-500/30'
-                              : 'border-slate-800 bg-slate-800 text-slate-300 hover:bg-slate-700'
-                          }`}
-                        >
-                          <span>⚡ Turbo ×3 {currentSession.settings.turbo ? '●' : ''}</span>
-                        </button>
+                          {/* Turbo Button */}
+                          <button
+                            onClick={() => {
+                              const newTurbo = !currentSession.settings.turbo
+                              updateSettingField('turbo', newTurbo)
+                              sendAction('turbo', newTurbo, newTurbo ? 'Bật Turbo ×3' : 'Tắt Turbo')
+                            }}
+                            className={`rounded-xl py-2 text-xs font-bold transition flex items-center justify-center gap-1.5 border cursor-pointer ${
+                              currentSession.settings.turbo
+                                ? 'border-amber-400 bg-amber-500 text-slate-950 font-black shadow-lg shadow-amber-500/30'
+                                : 'border-slate-800 bg-slate-800 text-slate-300 hover:bg-slate-700'
+                            }`}
+                          >
+                            <span>⚡ Turbo ×3 {currentSession.settings.turbo ? '●' : ''}</span>
+                          </button>
 
-                        {/* Rotate 3D Button */}
-                        <button
-                          onClick={() => {
-                            const newRotate = !currentSession.settings.rotate
-                            updateSettingField('rotate', newRotate)
-                            sendAction('rotate', newRotate, newRotate ? 'Bật tự xoay 3D' : 'Tắt tự xoay 3D')
-                          }}
-                          className={`rounded-xl py-2 text-xs font-bold transition flex items-center justify-center gap-1.5 border cursor-pointer ${
-                            currentSession.settings.rotate
-                              ? 'border-cyan-400 bg-cyan-500 text-slate-950 font-black shadow-lg shadow-cyan-500/30'
-                              : 'border-slate-800 bg-slate-800 text-slate-300 hover:bg-slate-700'
-                          }`}
-                        >
-                          <span>🔄 Tự xoay 3D {currentSession.settings.rotate ? '●' : ''}</span>
-                        </button>
+                          {/* Rotate 3D Button */}
+                          <button
+                            onClick={() => {
+                              const newRotate = !currentSession.settings.rotate
+                              updateSettingField('rotate', newRotate)
+                              sendAction('rotate', newRotate, newRotate ? 'Bật tự xoay 3D' : 'Tắt tự xoay 3D')
+                            }}
+                            className={`rounded-xl py-2 text-xs font-bold transition flex items-center justify-center gap-1.5 border cursor-pointer ${
+                              currentSession.settings.rotate
+                                ? 'border-cyan-400 bg-cyan-500 text-slate-950 font-black shadow-lg shadow-cyan-500/30'
+                                : 'border-slate-800 bg-slate-800 text-slate-300 hover:bg-slate-700'
+                            }`}
+                          >
+                            <span>🔄 Tự xoay 3D {currentSession.settings.rotate ? '●' : ''}</span>
+                          </button>
 
-                        {/* Reset Button */}
-                        <button
-                          onClick={() => sendAction('reset', undefined, 'In lại mẻ mới từ đầu')}
-                          className='rounded-xl py-2 text-xs font-bold border border-slate-800 bg-slate-800 text-slate-300 hover:bg-slate-700 transition flex items-center justify-center gap-1.5 cursor-pointer'
-                        >
-                          <span>🔁 In lại từ đầu</span>
-                        </button>
-                      </div>
+                          {/* Reset Button */}
+                          <button
+                            onClick={() => sendAction('reset', undefined, 'In lại mẻ mới từ đầu')}
+                            className='rounded-xl py-2 text-xs font-bold border border-slate-800 bg-slate-800 text-slate-300 hover:bg-slate-700 transition flex items-center justify-center gap-1.5 cursor-pointer'
+                          >
+                            <span>🔁 In lại từ đầu</span>
+                          </button>
+                        </div>
+                      ) : (
+                        /* Dynamic Actions for Non-Printer Templates (e.g. Photo Wall, Lucky Wheel) */
+                        currentTemplate.actions.filter((a) => a.variant !== 'danger' && a.variant !== 'accent').length > 0 && (
+                          <div className='grid grid-cols-2 gap-2'>
+                            {currentTemplate.actions
+                              .filter((a) => a.variant !== 'danger' && a.variant !== 'accent')
+                              .map((act) => (
+                                <button
+                                  key={act.id}
+                                  onClick={() => sendAction(act.actionKey, act.payload, act.label)}
+                                  className={`rounded-xl py-2 px-2 text-xs font-bold border transition flex items-center justify-center gap-1.5 cursor-pointer truncate ${
+                                    act.variant === 'warning'
+                                      ? 'border-amber-500/40 bg-amber-500/20 text-amber-300 hover:bg-amber-500/30'
+                                      : 'border-slate-800 bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white'
+                                  }`}
+                                >
+                                  {act.icon && <span>{act.icon}</span>}
+                                  <span>{act.label}</span>
+                                </button>
+                              ))}
+                          </div>
+                        )
+                      )}
 
                       {/* Camera Views Group with ACTIVE State */}
                       {currentTemplate.actions.some((a) => a.group === 'camera_views') && (
@@ -1349,8 +1917,14 @@ export default function App() {
                         }
 
                         if (field.type === 'boolean') {
+                          const isSubOption = field.key === 'showTopUsers'
                           return (
-                            <label key={field.key} className='flex items-center gap-2 text-xs cursor-pointer pt-1'>
+                            <label
+                              key={field.key}
+                              className={`flex items-center gap-2 text-xs cursor-pointer pt-1 transition ${
+                                isSubOption ? 'ml-4 pl-2.5 border-l-2 border-cyan-500/50 py-0.5' : ''
+                              }`}
+                            >
                               <input
                                 type='checkbox'
                                 checked={!!val}
@@ -1358,9 +1932,21 @@ export default function App() {
                                   updateSettingField(field.key, e.target.checked)
                                   sendAction(field.key, e.target.checked)
                                 }}
-                                className='h-3.5 w-3.5 rounded accent-cyan-500'
+                                className='h-3.5 w-3.5 rounded accent-cyan-500 cursor-pointer'
                               />
-                              <span className='text-[11px] text-slate-300'>{field.label}</span>
+                              <span
+                                className={`text-[11px] ${
+                                  isSubOption
+                                    ? val
+                                      ? 'text-amber-300 font-semibold'
+                                      : 'text-amber-200/70'
+                                    : val
+                                      ? 'text-white font-medium'
+                                      : 'text-slate-300'
+                                }`}
+                              >
+                                {field.label}
+                              </span>
                             </label>
                           )
                         }
@@ -1650,7 +2236,9 @@ export default function App() {
                                 Chưa có khán giả nào trong danh sách in
                               </p>
                               <p className='text-[11px] text-slate-500 max-w-xs'>
-                                Khi có khán giả trong hàng chờ hoặc máy in bắt đầu vẽ, 30 lượt in gần nhất sẽ hiển thị tại đây.
+                                {isPrinterTemplate
+                                  ? 'Khi có khán giả trong hàng chờ hoặc máy in bắt đầu vẽ, 30 lượt in gần nhất sẽ hiển thị tại đây.'
+                                  : 'Khán giả bình luận hoặc tặng quà sẽ xuất hiện trong hàng chờ tại đây.'}
                               </p>
                             </div>
                           )
@@ -1660,11 +2248,17 @@ export default function App() {
                           <>
                             <div className='flex items-center justify-between text-[11px] font-bold text-slate-400 pb-1 border-b border-slate-800/80'>
                               <span className='flex items-center gap-1'>
-                                <span>⚡ TIẾN TRÌNH IN</span>
+                                <span>
+                                  {isPrinterTemplate
+                                    ? '⚡ TIẾN TRÌNH IN'
+                                    : `📋 HÀNG CHỜ ${currentTemplate?.name?.toUpperCase() || 'LIVE'}`}
+                                </span>
                                 <span className='text-slate-500'>(30 người gần nhất)</span>
                               </span>
                               <span className='text-amber-400 font-mono'>
-                                {printingList.length} đang vẽ · {upcomingList.length} sắp in
+                                {isPrinterTemplate
+                                  ? `${printingList.length} đang vẽ · ${upcomingList.length} sắp in`
+                                  : `${upcomingList.length} người chờ`}
                               </span>
                             </div>
 
@@ -1743,7 +2337,7 @@ export default function App() {
                                       #{idx + 1}
                                     </span>
                                     <span className='text-[8px] uppercase tracking-wider text-slate-500 font-semibold'>
-                                      Sắp in
+                                      {isPrinterTemplate ? 'Sắp in' : 'Chờ lượt'}
                                     </span>
                                   </div>
 
@@ -1780,7 +2374,7 @@ export default function App() {
 
                                 <div className='flex items-center gap-1 shrink-0'>
                                   <button
-                                    title='Đẩy in ưu tiên ngay'
+                                    title='Đẩy ưu tiên ngay'
                                     onClick={() =>
                                       window.ipcRenderer?.invoke('queue:force-print', {
                                         sessionId: currentSession.id,
@@ -1790,7 +2384,9 @@ export default function App() {
                                     className='flex items-center gap-0.5 rounded border border-amber-500/40 bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold text-amber-300 hover:bg-amber-500/30 cursor-pointer transition'
                                   >
                                     <span>⚡</span>
-                                    <span>In luôn</span>
+                                    <span>
+                                      {isPrinterTemplate ? 'In luôn' : 'Ưu tiên'}
+                                    </span>
                                   </button>
                                 </div>
                               </div>
@@ -1876,6 +2472,16 @@ export default function App() {
           </div>
         )}
 
+        {viewMode === 'control' && !currentSession && (
+          <Welcome3D
+            onOpenCreate={(tmplId) => {
+              if (tmplId) setSelectedTemplateId(tmplId)
+              setViewMode('create')
+            }}
+            onOpenSettings={() => setShowSettingsModal(true)}
+          />
+        )}
+
         {/* Modal Faker Batch Test Audience */}
         {currentSession && (
           <FakerBatchModal
@@ -1896,6 +2502,834 @@ export default function App() {
             onClose={() => setShowMusicPlayer(false)}
             streamKey={currentSession.streamKey}
           />
+        )}
+
+        {/* Modal Cài Đặt Hệ Thống: Mạng, AI Provider, TTS & Kịch Bản Template */}
+        {showSettingsModal && (
+          <div className='fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4'>
+            <div className='w-full max-w-2xl rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150 max-h-[90vh] flex flex-col'>
+              <div className='flex items-center justify-between border-b border-slate-800 pb-3'>
+                <div className='flex items-center gap-2'>
+                  <span className='text-lg'>⚙️</span>
+                  <h3 className='text-sm font-bold text-white uppercase tracking-wider'>
+                    Cài Đặt Hệ Thống, AI & TTS Giọng Nói
+                  </h3>
+                </div>
+                <button
+                  onClick={() => setShowSettingsModal(false)}
+                  className='rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white transition'
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Modal Tabs Bar */}
+              <div className='flex items-center gap-1.5 border-b border-slate-800 pb-2.5 overflow-x-auto text-xs font-semibold'>
+                {[
+                  { id: 'network', label: '🌐 Mạng & Proxy' },
+                  { id: 'ai', label: '🤖 AI Provider' },
+                  { id: 'tts', label: '🔊 Giọng Nói (TTS)' },
+                  { id: 'prompts', label: '📝 Kịch Bản Theo Template' },
+                ].map((t) => (
+                  <button
+                    key={t.id}
+                    type='button'
+                    onClick={() => setSettingsModalTab(t.id as any)}
+                    className={`rounded-lg px-3 py-1.5 transition whitespace-nowrap cursor-pointer ${
+                      settingsModalTab === t.id
+                        ? 'bg-cyan-500 text-slate-950 font-bold shadow-sm'
+                        : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
+                    }`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Tab 1: Mạng & Proxy (EulerStream, Proxy, Cloudflare) */}
+              {settingsModalTab === 'network' && (
+                <div className='flex-1 overflow-y-auto dark-scroll space-y-4 pr-1 text-xs'>
+                  <p className='text-slate-400 text-[11.5px]'>
+                    Cấu hình giúp vượt qua giới hạn kết nối (Rate Limit) và duy trì kết nối TikTok Live 24/7 ổn định.
+                  </p>
+
+                  {/* Field 1: EulerStream API Key */}
+                  <div className='space-y-1.5'>
+                    <div className='flex items-center justify-between'>
+                      <label className='font-bold text-slate-300'>
+                        EulerStream API Key (Tăng giới hạn request)
+                      </label>
+                      <a
+                        href='https://www.eulerstream.com/pricing'
+                        target='_blank'
+                        rel='noreferrer'
+                        className='text-[10px] text-cyan-400 hover:underline'
+                      >
+                        Đăng ký miễn phí (2,500 req/ngày) ↗
+                      </a>
+                    </div>
+                    <div className='flex gap-2'>
+                      <input
+                        type='text'
+                        value={signApiKey}
+                        onChange={(e) => setSignApiKey(e.target.value)}
+                        placeholder='Ví dụ: euler_live_xxxxxx hoặc để trống'
+                        className='flex-1 rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white placeholder-slate-600 focus:border-cyan-500 focus:outline-none'
+                      />
+                      <button
+                        type='button'
+                        onClick={() => checkEulerUsage()}
+                        disabled={eulerUsageLoading}
+                        className='px-3 py-2 text-xs font-semibold rounded-xl bg-cyan-950/80 border border-cyan-800/60 text-cyan-300 hover:bg-cyan-900 transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50 shrink-0'
+                        title='Kiểm tra quota và số request còn lại'
+                      >
+                        {eulerUsageLoading ? (
+                          <>
+                            <span className='animate-spin text-xs'>⏳</span>
+                            <span>Đang check...</span>
+                          </>
+                        ) : (
+                          <>
+                            <span>📊</span>
+                            <span>Check Quota</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                    {/* Quota Usage Status Card */}
+                    {eulerUsage && (
+                      <div className='rounded-xl border border-cyan-500/25 bg-cyan-950/20 p-3 space-y-2 text-xs'>
+                        <div className='flex items-center justify-between'>
+                          <div className='flex items-center gap-1.5'>
+                            <span
+                              className={`inline-block w-2 h-2 rounded-full ${eulerUsage.isCustomKey ? 'bg-emerald-400' : 'bg-amber-400'}`}
+                            />
+                            <span className='font-bold text-white text-[11px]'>
+                              {eulerUsage.isCustomKey ? 'Key Riêng Hợp Lệ' : 'Dùng Chung (Chưa có Key)'}
+                            </span>
+                          </div>
+                          {eulerUsage.day?.reset_at && (
+                            <span className='text-[10px] text-slate-400 font-mono'>
+                              Reset ngày:{' '}
+                              {new Date(eulerUsage.day.reset_at).toLocaleTimeString([], {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className='grid grid-cols-2 gap-2'>
+                          <div className='rounded-lg bg-slate-900/90 border border-slate-800 p-2'>
+                            <div className='text-[10px] text-slate-400'>Hạn Mức Hôm Nay</div>
+                            <div className='text-sm font-black text-cyan-300 font-mono mt-0.5'>
+                              {eulerUsage.day
+                                ? `${eulerUsage.day.remaining.toLocaleString()} / ${eulerUsage.day.max.toLocaleString()}`
+                                : '—'}
+                            </div>
+                            <div className='text-[9.5px] text-slate-400 mt-1 flex justify-between'>
+                              <span>Còn lại</span>
+                              <span className='font-bold text-cyan-400'>
+                                {eulerUsage.day
+                                  ? `${Math.round((eulerUsage.day.remaining / Math.max(1, eulerUsage.day.max)) * 100)}%`
+                                  : '0%'}
+                              </span>
+                            </div>
+                            <div className='h-1 w-full bg-slate-800 rounded-full mt-1 overflow-hidden'>
+                              <div
+                                className='h-full bg-cyan-400 transition-all duration-300'
+                                style={{
+                                  width: `${eulerUsage.day ? Math.min(100, Math.round((eulerUsage.day.remaining / Math.max(1, eulerUsage.day.max)) * 100)) : 0}%`,
+                                }}
+                              />
+                            </div>
+                          </div>
+
+                          <div className='rounded-lg bg-slate-900/90 border border-slate-800 p-2'>
+                            <div className='text-[10px] text-slate-400'>Hạn Mức Trong Giờ</div>
+                            <div className='text-sm font-black text-emerald-300 font-mono mt-0.5'>
+                              {eulerUsage.hour
+                                ? `${eulerUsage.hour.remaining.toLocaleString()} / ${eulerUsage.hour.max.toLocaleString()}`
+                                : '—'}
+                            </div>
+                            <div className='text-[9.5px] text-slate-400 mt-1 flex justify-between'>
+                              <span>Còn lại</span>
+                              <span className='font-bold text-emerald-400'>
+                                {eulerUsage.hour
+                                  ? `${Math.round((eulerUsage.hour.remaining / Math.max(1, eulerUsage.hour.max)) * 100)}%`
+                                  : '0%'}
+                              </span>
+                            </div>
+                            <div className='h-1 w-full bg-slate-800 rounded-full mt-1 overflow-hidden'>
+                              <div
+                                className='h-full bg-emerald-400 transition-all duration-300'
+                                style={{
+                                  width: `${eulerUsage.hour ? Math.min(100, Math.round((eulerUsage.hour.remaining / Math.max(1, eulerUsage.hour.max)) * 100)) : 0}%`,
+                                }}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {eulerUsageError && (
+                      <div className='rounded-xl border border-rose-500/30 bg-rose-950/30 p-2 text-xs text-rose-300 flex items-center gap-2'>
+                        <span>⚠️</span>
+                        <span className='font-mono text-[11px]'>{eulerUsageError}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Field 2: HTTP / HTTPS Multi-Proxy */}
+                  <div className='space-y-1.5'>
+                    <div className='flex items-center justify-between'>
+                      <label className='font-bold text-slate-300'>
+                        Danh sách Proxy HTTP / HTTPS (Mỗi dòng 1 Proxy)
+                      </label>
+                      <span className='text-[10px] text-slate-400 font-mono'>
+                        {proxyUrl.split('\n').filter((l) => Boolean(l.trim())).length} proxy
+                      </span>
+                    </div>
+                    <textarea
+                      rows={3}
+                      value={proxyUrl}
+                      onChange={(e) => setProxyUrl(e.target.value)}
+                      placeholder='http://user:pass@123.45.67.89:8080&#10;http://user:pass@98.76.54.32:8888'
+                      className='w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs font-mono text-cyan-300 placeholder-slate-600 focus:border-cyan-500 focus:outline-none resize-y'
+                    />
+                  </div>
+
+                  {/* Field 3: Custom Sign Server URL */}
+                  <div className='space-y-1.5'>
+                    <label className='font-bold text-slate-300'>
+                      Custom Sign Server URL (Tùy chọn nâng cao)
+                    </label>
+                    <input
+                      type='text'
+                      value={signApiUrl}
+                      onChange={(e) => setSignApiUrl(e.target.value)}
+                      placeholder='Mặc định: https://api.eulerstream.com'
+                      className='w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white placeholder-slate-600 focus:border-cyan-500 focus:outline-none'
+                    />
+                  </div>
+
+                  {/* Cloudflare Tunnel */}
+                  <div className='rounded-xl border border-slate-800 bg-slate-950/60 p-3 space-y-2'>
+                    <div className='flex items-center justify-between text-xs'>
+                      <span className='font-bold text-slate-300'>🌐 Cloudflare Tunnel Online</span>
+                      <span className={`font-mono text-[10px] ${tunnelUrl ? 'text-emerald-400' : 'text-slate-500'}`}>
+                        {tunnelUrl ? 'ĐANG BẬT' : 'ĐANG TẮT'}
+                      </span>
+                    </div>
+                    {tunnelUrl ? (
+                      <div className='flex items-center gap-2'>
+                        <input
+                          type='text'
+                          readOnly
+                          value={getOnlineObsUrl()}
+                          className='flex-1 rounded-lg border border-slate-800 bg-slate-900 px-2.5 py-1 text-[11px] font-mono text-cyan-300 truncate'
+                        />
+                        <button
+                          onClick={() => copyOnlineObsUrl()}
+                          className='rounded-lg bg-cyan-600 px-2.5 py-1 text-xs font-bold text-white hover:bg-cyan-500 transition cursor-pointer'
+                        >
+                          {copyTunnelToast ? 'Đã chép' : 'Chép'}
+                        </button>
+                      </div>
+                    ) : (
+                      <p className='text-[10.5px] text-slate-500'>
+                        Bật Tunnel ở thanh trên cùng để tạo link public HTTPS mở từ xa trên máy khác.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Tab 2: AI Provider (OpenAI, Gemini, Ollama, DeepSeek, Rule-based) */}
+              {settingsModalTab === 'ai' && (
+                <div className='flex-1 overflow-y-auto dark-scroll space-y-4 pr-1 text-xs'>
+                  {/* Master AI Toggle */}
+                  <div className='flex items-center justify-between rounded-xl border border-cyan-500/30 bg-cyan-950/20 p-3'>
+                    <div>
+                      <div className='font-bold text-cyan-300 flex items-center gap-1.5'>
+                        <span>🤖</span>
+                        <span>Trợ Lý Ảo Tương Tác AI Livestream</span>
+                      </div>
+                      <p className='text-[11px] text-slate-400 mt-0.5'>
+                        Tự động lắng nghe chat và quà tặng, chọn lọc phản hồi dí dỏm bằng giọng nói tự nhiên.
+                      </p>
+                    </div>
+                    <label className='relative inline-flex items-center cursor-pointer'>
+                      <input
+                        type='checkbox'
+                        checked={aiConfig.enabled}
+                        onChange={(e) => updateAiConfig({ enabled: e.target.checked })}
+                        className='sr-only peer'
+                      />
+                      <div className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyan-500"></div>
+                    </label>
+                  </div>
+
+                  {/* Provider Selector */}
+                  <div className='space-y-1.5'>
+                    <label className='font-bold text-slate-300'>
+                      Nhà Cung Cấp AI (AI Provider)
+                    </label>
+                    <div className='grid grid-cols-2 md:grid-cols-3 gap-2'>
+                      {[
+                        { id: 'openai', name: 'OpenAI (GPT-4o)', desc: 'Chuẩn quốc tế, phản hồi thông minh' },
+                        { id: 'gemini', name: 'Google Gemini', desc: 'Gemini 1.5 Flash cực nhanh & rẻ' },
+                        { id: 'ollama', name: 'Ollama Local (Offline)', desc: 'Miễn phí trên máy, không cần API Key' },
+                        { id: 'deepseek', name: 'DeepSeek AI', desc: 'Rất thông minh tiếng Việt, giá cực rẻ' },
+                        { id: 'custom', name: 'Tùy Chỉnh (OpenRouter/Groq)', desc: 'Chuẩn OpenAI compatible bất kỳ' },
+                        { id: 'rule_based', name: 'Cố Định (Không cần Key)', desc: 'Tự động nói kịch bản không tốn tiền' },
+                      ].map((prov) => (
+                        <button
+                          key={prov.id}
+                          type='button'
+                          onClick={() => {
+                            const updates: any = { provider: prov.id }
+                            if (prov.id === 'gemini') {
+                              updates.baseUrl = 'https://generativelanguage.googleapis.com/v1beta/openai'
+                              updates.model = 'gemini-1.5-flash'
+                            } else if (prov.id === 'ollama') {
+                              updates.baseUrl = 'http://localhost:11434/v1'
+                              updates.model = 'qwen2.5:3b'
+                            } else if (prov.id === 'deepseek') {
+                              updates.baseUrl = 'https://api.deepseek.com/v1'
+                              updates.model = 'deepseek-chat'
+                            } else if (prov.id === 'openai') {
+                              updates.baseUrl = 'https://api.openai.com/v1'
+                              updates.model = 'gpt-4o-mini'
+                            }
+                            updateAiConfig(updates)
+                          }}
+                          className={`rounded-xl border p-2.5 text-left transition cursor-pointer ${
+                            aiConfig.provider === prov.id
+                              ? 'border-cyan-500 bg-cyan-950/40 text-cyan-300 shadow-sm'
+                              : 'border-slate-800 bg-slate-950 text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          <div className='font-bold text-[11.5px]'>{prov.name}</div>
+                          <div className='text-[10px] opacity-75 mt-0.5 line-clamp-1'>{prov.desc}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {aiConfig.provider !== 'rule_based' && (
+                    <div className='space-y-3 rounded-xl border border-slate-800 bg-slate-950/70 p-3'>
+                      {/* API Key */}
+                      <div className='space-y-1'>
+                        <div className='flex items-center justify-between'>
+                          <label className='font-bold text-slate-300'>
+                            API Key {aiConfig.provider === 'ollama' ? '(Ollama không bắt buộc)' : ''}
+                          </label>
+                          <button
+                            type='button'
+                            onClick={() => setShowApiKey(!showApiKey)}
+                            className='text-[10px] text-slate-400 hover:text-white cursor-pointer'
+                          >
+                            {showApiKey ? 'Ẩn' : 'Hiện'}
+                          </button>
+                        </div>
+                        <input
+                          type={showApiKey ? 'text' : 'password'}
+                          value={aiConfig.apiKey}
+                          onChange={(e) => updateAiConfig({ apiKey: e.target.value })}
+                          placeholder={aiConfig.provider === 'ollama' ? 'Không cần điền đối với Ollama' : 'sk-...'}
+                          className='w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-xs font-mono text-cyan-300 placeholder-slate-600 focus:border-cyan-500 focus:outline-none'
+                        />
+                      </div>
+
+                      {/* Base URL & Model */}
+                      <div className='grid grid-cols-1 md:grid-cols-2 gap-3'>
+                        <div className='space-y-1'>
+                          <label className='font-bold text-slate-300'>Base URL API</label>
+                          <input
+                            type='text'
+                            value={aiConfig.baseUrl}
+                            onChange={(e) => updateAiConfig({ baseUrl: e.target.value })}
+                            placeholder='https://api.openai.com/v1'
+                            className='w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs text-white placeholder-slate-600 focus:border-cyan-500 focus:outline-none'
+                          />
+                        </div>
+
+                        <div className='space-y-1'>
+                          <label className='font-bold text-slate-300'>Tên Model</label>
+                          <input
+                            type='text'
+                            value={aiConfig.model}
+                            onChange={(e) => updateAiConfig({ model: e.target.value })}
+                            placeholder='gpt-4o-mini'
+                            className='w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs text-white placeholder-slate-600 focus:border-cyan-500 focus:outline-none'
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Batching & Rate Limit handling for crowd */}
+                  <div className='rounded-xl border border-slate-800 bg-slate-950/70 p-3 space-y-3'>
+                    <div className='font-bold text-slate-300 flex items-center justify-between'>
+                      <span>⏱️ Cơ Chế Gom Bình Luận (Chống Tràn & Chống Quá Tải Khi Đông Người)</span>
+                      <span className='rounded bg-cyan-950 border border-cyan-800 px-2 py-0.5 text-cyan-400 font-mono text-[11px] font-bold'>
+                        Mỗi {aiConfig.batchInterval || 6} giây
+                      </span>
+                    </div>
+
+                    <p className='text-[11px] text-slate-400'>
+                      Khi phòng live có hàng nghìn comment, AI không đọc từng câu một mà gom lại trong cửa sổ thời gian này, ưu tiên người gửi quà & VIP rồi đúc kết thành 1 câu nói tự nhiên.
+                    </p>
+
+                    <div className='grid grid-cols-1 md:grid-cols-2 gap-3'>
+                      <div className='space-y-1'>
+                        <div className='flex justify-between text-[11px] text-slate-400'>
+                          <span>Khoảng cách gom chat:</span>
+                          <span className='font-bold text-cyan-400'>{aiConfig.batchInterval || 6} giây</span>
+                        </div>
+                        <input
+                          type='range'
+                          min={3}
+                          max={15}
+                          step={1}
+                          value={aiConfig.batchInterval || 6}
+                          onChange={(e) => updateAiConfig({ batchInterval: parseInt(e.target.value, 10) || 6 })}
+                          className='w-full accent-cyan-500 cursor-pointer'
+                        />
+                      </div>
+
+                      <div className='space-y-1'>
+                        <div className='flex justify-between text-[11px] text-slate-400'>
+                          <span>Số bình luận tối đa lấy mỗi đợt:</span>
+                          <span className='font-bold text-cyan-400'>{aiConfig.maxBatchSize || 6} comment</span>
+                        </div>
+                        <input
+                          type='range'
+                          min={1}
+                          max={10}
+                          step={1}
+                          value={aiConfig.maxBatchSize || 6}
+                          onChange={(e) => updateAiConfig({ maxBatchSize: parseInt(e.target.value, 10) || 6 })}
+                          className='w-full accent-cyan-500 cursor-pointer'
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Tab 3: Giọng Nói TTS */}
+              {settingsModalTab === 'tts' && (
+                <div className='flex-1 overflow-y-auto dark-scroll space-y-4 pr-1 text-xs'>
+                  {/* Master TTS Toggle */}
+                  <div className='flex items-center justify-between rounded-xl border border-emerald-500/30 bg-emerald-950/20 p-3'>
+                    <div>
+                      <div className='font-bold text-emerald-300 flex items-center gap-1.5'>
+                        <span>🔊</span>
+                        <span>Đọc Bằng Giọng Nói (Text-to-Speech)</span>
+                      </div>
+                      <p className='text-[11px] text-slate-400 mt-0.5'>
+                        Phát âm thanh câu trả lời của AI ra loa hoặc truyền trực tiếp vào OBS Browser Source.
+                      </p>
+                    </div>
+                    <label className='relative inline-flex items-center cursor-pointer'>
+                      <input
+                        type='checkbox'
+                        checked={aiConfig.ttsEnabled}
+                        onChange={(e) => updateAiConfig({ ttsEnabled: e.target.checked })}
+                        className='sr-only peer'
+                      />
+                      <div className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
+                    </label>
+                  </div>
+
+                  {/* Engine Selection */}
+                  <div className='space-y-1.5'>
+                    <label className='font-bold text-slate-300'>Nhà Cung Cấp & Công Nghệ Đọc (TTS Engine)</label>
+                    <div className='grid grid-cols-2 md:grid-cols-3 gap-2'>
+                      {[
+                        { id: 'webspeech', name: '⚡ Web Speech (Bản Địa)', desc: '0ms trễ, miễn phí, tích hợp Windows & Chrome' },
+                        { id: 'google', name: '☁️ Google TTS (Free MP3)', desc: 'Giọng chuẩn Google tiếng Việt, không cần Key' },
+                        { id: 'openai', name: '🤖 OpenAI Audio Speech', desc: 'Mô hình tts-1 / tts-1-hd, giọng rất mượt' },
+                        { id: 'elevenlabs', name: '🎙️ ElevenLabs AI', desc: 'Giọng nói AI truyền cảm, hỗ trợ Voice ID' },
+                        { id: 'custom_remote', name: '🌐 Custom Remote API', desc: 'Gọi API endpoint âm thanh riêng (GET/POST)' },
+                      ].map((item) => (
+                        <button
+                          key={item.id}
+                          type='button'
+                          onClick={() => {
+                            const updates: any = { ttsEngine: item.id }
+                            if (item.id === 'openai') {
+                              updates.ttsBaseUrl = 'https://api.openai.com/v1'
+                              updates.ttsModel = 'tts-1'
+                              updates.ttsVoice = 'nova'
+                            } else if (item.id === 'elevenlabs') {
+                              updates.ttsModel = 'eleven_multilingual_v2'
+                              updates.ttsVoice = '21m00Tcm4TlvDq8ikWAM'
+                            }
+                            updateAiConfig(updates)
+                          }}
+                          className={`rounded-xl border p-2.5 text-left transition cursor-pointer ${
+                            aiConfig.ttsEngine === item.id
+                              ? 'border-emerald-500 bg-emerald-950/30 text-emerald-300 shadow-sm'
+                              : 'border-slate-800 bg-slate-950 text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          <div className='font-bold text-[11.5px]'>{item.name}</div>
+                          <div className='text-[10px] opacity-75 mt-0.5 line-clamp-1'>{item.desc}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Remote TTS Configuration Card */}
+                  {(aiConfig.ttsEngine === 'openai' || aiConfig.ttsEngine === 'elevenlabs' || aiConfig.ttsEngine === 'custom_remote') && (
+                    <div className='space-y-3 rounded-xl border border-emerald-500/30 bg-slate-950/70 p-3'>
+                      <div className='font-bold text-emerald-300 flex items-center justify-between'>
+                        <span>⚙️ Cấu Hình Remote TTS API ({aiConfig.ttsEngine.toUpperCase()})</span>
+                        <span className='text-[10px] text-slate-400 font-normal'>Tự động fallback về Google TTS nếu lỗi API</span>
+                      </div>
+
+                      {/* API Key */}
+                      <div className='space-y-1'>
+                        <label className='font-bold text-slate-300'>
+                          API Key / Token {aiConfig.ttsEngine === 'elevenlabs' ? '(xi-api-key)' : '(Bearer Token)'}
+                        </label>
+                        <input
+                          type='password'
+                          value={aiConfig.ttsApiKey}
+                          onChange={(e) => updateAiConfig({ ttsApiKey: e.target.value })}
+                          placeholder={aiConfig.ttsEngine === 'openai' ? 'sk-...' : 'Nhập API key'}
+                          className='w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs font-mono text-emerald-300 placeholder-slate-600 focus:border-emerald-500 focus:outline-none'
+                        />
+                      </div>
+
+                      {/* Endpoint Base URL & Model & Voice */}
+                      <div className='grid grid-cols-1 md:grid-cols-3 gap-2.5'>
+                        <div className='space-y-1'>
+                          <label className='font-bold text-slate-300'>
+                            {aiConfig.ttsEngine === 'custom_remote' ? 'Endpoint URL (HTTP/S)' : 'Base URL'}
+                          </label>
+                          <input
+                            type='text'
+                            value={aiConfig.ttsBaseUrl}
+                            onChange={(e) => updateAiConfig({ ttsBaseUrl: e.target.value })}
+                            placeholder={
+                              aiConfig.ttsEngine === 'openai'
+                                ? 'https://api.openai.com/v1'
+                                : aiConfig.ttsEngine === 'elevenlabs'
+                                ? 'https://api.elevenlabs.io/v1'
+                                : 'http://my-tts-server/api/speak'
+                            }
+                            className='w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs text-white placeholder-slate-600 focus:border-emerald-500 focus:outline-none'
+                          />
+                        </div>
+
+                        <div className='space-y-1'>
+                          <label className='font-bold text-slate-300'>Model</label>
+                          <input
+                            type='text'
+                            value={aiConfig.ttsModel}
+                            onChange={(e) => updateAiConfig({ ttsModel: e.target.value })}
+                            placeholder={aiConfig.ttsEngine === 'openai' ? 'tts-1' : 'eleven_multilingual_v2'}
+                            className='w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs text-white placeholder-slate-600 focus:border-emerald-500 focus:outline-none'
+                          />
+                        </div>
+
+                        <div className='space-y-1'>
+                          <label className='font-bold text-slate-300'>
+                            {aiConfig.ttsEngine === 'elevenlabs' ? 'Voice ID' : 'Voice Name'}
+                          </label>
+                          <input
+                            type='text'
+                            value={aiConfig.ttsVoice}
+                            onChange={(e) => updateAiConfig({ ttsVoice: e.target.value })}
+                            placeholder={aiConfig.ttsEngine === 'openai' ? 'nova, alloy, shimmer' : 'Voice ID'}
+                            className='w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs text-white placeholder-slate-600 focus:border-emerald-500 focus:outline-none'
+                          />
+                        </div>
+                      </div>
+
+                      {aiConfig.ttsEngine === 'custom_remote' && (
+                        <div className='flex items-center gap-4 text-slate-300 pt-1'>
+                          <span className='font-bold'>Phương thức HTTP:</span>
+                          <label className='flex items-center gap-1 cursor-pointer'>
+                            <input
+                              type='radio'
+                              name='customMethod'
+                              checked={aiConfig.ttsCustomMethod !== 'GET'}
+                              onChange={() => updateAiConfig({ ttsCustomMethod: 'POST' })}
+                              className='accent-emerald-500'
+                            />
+                            <span>POST (JSON body)</span>
+                          </label>
+                          <label className='flex items-center gap-1 cursor-pointer'>
+                            <input
+                              type='radio'
+                              name='customMethod'
+                              checked={aiConfig.ttsCustomMethod === 'GET'}
+                              onChange={() => updateAiConfig({ ttsCustomMethod: 'GET' })}
+                              className='accent-emerald-500'
+                            />
+                            <span>GET (?text=...)</span>
+                          </label>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Audio Ducking Control */}
+                  <div className='rounded-xl border border-slate-800 bg-slate-950/70 p-3'>
+                    <label className='flex items-start gap-2.5 cursor-pointer'>
+                      <input
+                        type='checkbox'
+                        checked={aiConfig.ttsDuckMusic !== false}
+                        onChange={(e) => updateAiConfig({ ttsDuckMusic: e.target.checked })}
+                        className='h-4 w-4 rounded accent-emerald-500 mt-0.5'
+                      />
+                      <div>
+                        <div className='font-bold text-slate-200 flex items-center gap-1.5'>
+                          <span>🎵</span>
+                          <span>Tự Động Giảm Nhỏ Nhạc Nền Khi Có Giọng Đọc (Music Ducking)</span>
+                        </div>
+                        <p className='text-[10.5px] text-slate-400 mt-0.5 leading-relaxed'>
+                          Khi AI bắt đầu nói, âm lượng nhạc nền (YouTube hoặc MP3) trong OBS sẽ tự động hạ xuống <b>18%</b> để khán giả nghe rõ lời thoại, và tự động khôi phục lại âm lượng ban đầu khi đọc xong.
+                        </p>
+                      </div>
+                    </label>
+                  </div>
+
+                  {/* Speed & Volume Controls */}
+                  <div className='grid grid-cols-1 md:grid-cols-2 gap-3 rounded-xl border border-slate-800 bg-slate-950/70 p-3'>
+                    <div className='space-y-1.5'>
+                      <div className='flex justify-between text-slate-300 font-semibold'>
+                        <span>Tốc độ đọc (Speed):</span>
+                        <span className='font-mono font-bold text-emerald-400'>{aiConfig.ttsSpeed || 1.0}×</span>
+                      </div>
+                      <input
+                        type='range'
+                        min={0.8}
+                        max={1.5}
+                        step={0.1}
+                        value={aiConfig.ttsSpeed || 1.0}
+                        onChange={(e) => updateAiConfig({ ttsSpeed: parseFloat(e.target.value) || 1.0 })}
+                        className='w-full accent-emerald-500 cursor-pointer'
+                      />
+                      <div className='flex justify-between text-[10px] text-slate-500'>
+                        <span>0.8× (Chậm rãi)</span>
+                        <span>1.0× (Bình thường)</span>
+                        <span>1.5× (Nhanh, dồn dập)</span>
+                      </div>
+                    </div>
+
+                    <div className='space-y-1.5'>
+                      <div className='flex justify-between text-slate-300 font-semibold'>
+                        <span>Âm lượng (Volume):</span>
+                        <span className='font-mono font-bold text-emerald-400'>
+                          {Math.round((aiConfig.ttsVolume || 1.0) * 100)}%
+                        </span>
+                      </div>
+                      <input
+                        type='range'
+                        min={0.2}
+                        max={1.0}
+                        step={0.05}
+                        value={aiConfig.ttsVolume || 1.0}
+                        onChange={(e) => updateAiConfig({ ttsVolume: parseFloat(e.target.value) || 1.0 })}
+                        className='w-full accent-emerald-500 cursor-pointer'
+                      />
+                      <div className='flex justify-between text-[10px] text-slate-500'>
+                        <span>20%</span>
+                        <span>60%</span>
+                        <span>100%</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Playback Destinations */}
+                  <div className='rounded-xl border border-slate-800 bg-slate-950/70 p-3 space-y-2.5'>
+                    <label className='font-bold text-slate-300'>Nơi Phát Âm Thanh</label>
+                    <div className='grid grid-cols-1 md:grid-cols-2 gap-2'>
+                      <label className='flex items-center gap-2 rounded-lg bg-slate-900/80 p-2.5 border border-slate-800 cursor-pointer'>
+                        <input
+                          type='checkbox'
+                          checked={aiConfig.playInApp}
+                          onChange={(e) => updateAiConfig({ playInApp: e.target.checked })}
+                          className='h-4 w-4 rounded accent-emerald-500'
+                        />
+                        <div>
+                          <div className='font-bold text-slate-200'>Phát trên máy tính này</div>
+                          <div className='text-[10px] text-slate-400'>Streamer nghe trực tiếp qua loa / tai nghe máy</div>
+                        </div>
+                      </label>
+
+                      <label className='flex items-center gap-2 rounded-lg bg-slate-900/80 p-2.5 border border-slate-800 cursor-pointer'>
+                        <input
+                          type='checkbox'
+                          checked={aiConfig.playInObs}
+                          onChange={(e) => updateAiConfig({ playInObs: e.target.checked })}
+                          className='h-4 w-4 rounded accent-emerald-500'
+                        />
+                        <div>
+                          <div className='font-bold text-slate-200'>Phát qua OBS Preview / Overlay</div>
+                          <div className='text-[10px] text-slate-400'>OBS Browser Source tự thu âm thanh vào luồng phát</div>
+                        </div>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Test Speak Sandbox */}
+                  <div className='rounded-xl border border-slate-800 bg-slate-950/70 p-3 space-y-2'>
+                    <label className='font-bold text-slate-300'>Thử Giọng Đọc</label>
+                    <div className='flex gap-2'>
+                      <input
+                        type='text'
+                        value={testSpeechInput}
+                        onChange={(e) => setTestSpeechInput(e.target.value)}
+                        placeholder='Ví dụ: Chào mừng anh em đã đến với giải đua xe ngày hôm nay!'
+                        className='flex-1 rounded-xl border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs text-white placeholder-slate-600 focus:border-emerald-500 focus:outline-none'
+                      />
+                      <button
+                        type='button'
+                        onClick={() => handleTestSpeak(testSpeechInput)}
+                        className='px-3.5 py-1.5 rounded-xl bg-emerald-600 text-white font-bold hover:bg-emerald-500 transition shadow flex items-center gap-1.5 cursor-pointer shrink-0'
+                      >
+                        <span>🗣️</span>
+                        <span>Nói Thử</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Tab 4: Kịch Bản Prompt Theo Từng Loại Template */}
+              {settingsModalTab === 'prompts' && (
+                <div className='flex-1 overflow-y-auto dark-scroll space-y-3.5 pr-1 text-xs'>
+                  <p className='text-slate-400 text-[11.5px]'>
+                    Mỗi template có phong cách (Persona) và kịch bản tương tác khác nhau. Chọn template dưới đây để tùy biến prompt cho AI:
+                  </p>
+
+                  {/* Dynamic Template Picker */}
+                  <div className='flex items-center gap-2 overflow-x-auto pb-1.5'>
+                    {templates.map((item) => (
+                      <button
+                        key={item.id}
+                        type='button'
+                        onClick={() => setPromptTemplateEditId(item.id)}
+                        className={`rounded-xl px-3 py-1.5 text-xs font-bold transition flex items-center gap-1.5 border whitespace-nowrap cursor-pointer ${
+                          promptTemplateEditId === item.id
+                            ? 'border-indigo-500 bg-indigo-950 text-indigo-300 shadow-sm'
+                            : 'border-slate-800 bg-slate-950 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        <span>{item.icon || '🎮'}</span>
+                        <span>{item.name}</span>
+                      </button>
+                    ))}
+
+                    <button
+                      type='button'
+                      onClick={() => setPromptTemplateEditId('default')}
+                      className={`rounded-xl px-3 py-1.5 text-xs font-bold transition flex items-center gap-1.5 border whitespace-nowrap cursor-pointer ${
+                        promptTemplateEditId === 'default'
+                          ? 'border-indigo-500 bg-indigo-950 text-indigo-300 shadow-sm'
+                          : 'border-slate-800 bg-slate-950 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <span>💬</span>
+                      <span>Chat Chung / Mặc Định</span>
+                    </button>
+                  </div>
+
+                  {/* Persona Overview Box */}
+                  {(() => {
+                    const info = getPersonaInfo(promptTemplateEditId)
+                    return (
+                      <div className={`rounded-xl border p-3 flex items-center justify-between gap-3 ${info.border}`}>
+                        <div className='flex items-center gap-2'>
+                          <span className='text-xl'>{info.icon}</span>
+                          <div>
+                            <div className='font-bold text-[12px]'>{info.badge}</div>
+                            <div className='text-[10.5px] opacity-80 mt-0.5'>{info.desc}</div>
+                          </div>
+                        </div>
+                        <button
+                          type='button'
+                          onClick={() => handleResetPrompt(promptTemplateEditId)}
+                          className='rounded-lg border border-slate-700 bg-slate-900/80 px-2.5 py-1 text-[11px] font-semibold text-slate-300 hover:text-white transition cursor-pointer shrink-0'
+                          title='Khôi phục nội dung prompt ban đầu do hệ thống soạn sẵn'
+                        >
+                          🔄 Khôi phục mặc định
+                        </button>
+                      </div>
+                    )
+                  })()}
+
+                  {/* Prompt Textarea */}
+                  <div className='space-y-1.5'>
+                    <div className='flex items-center justify-between text-slate-300 font-bold'>
+                      <label>System Prompt (Chỉ dẫn hành vi cho AI)</label>
+                      <span className='text-[10px] text-slate-500 font-mono'>
+                        {(aiConfig.templatePrompts[promptTemplateEditId] || defaultPrompts[promptTemplateEditId] || '').length} ký tự
+                      </span>
+                    </div>
+
+                    <textarea
+                      rows={8}
+                      value={aiConfig.templatePrompts[promptTemplateEditId] || defaultPrompts[promptTemplateEditId] || ''}
+                      onChange={(e) => {
+                        const newPrompts = {
+                          ...aiConfig.templatePrompts,
+                          [promptTemplateEditId]: e.target.value,
+                        }
+                        updateAiConfig({ templatePrompts: newPrompts })
+                      }}
+                      placeholder='Nhập prompt chỉ dẫn cho AI khi chạy template này...'
+                      className='w-full rounded-xl border border-slate-800 bg-slate-950 p-3 text-xs font-mono text-cyan-200 placeholder-slate-600 focus:border-indigo-500 focus:outline-none resize-y leading-relaxed'
+                    />
+
+                    <div className='rounded-lg bg-slate-950/60 border border-slate-800/80 p-2.5 text-[10.5px] text-slate-400 space-y-1'>
+                      <p className='font-bold text-slate-300'>💡 Mẹo viết prompt cho TTS chuẩn & cuốn hút:</p>
+                      <ul className='list-disc list-inside space-y-0.5 text-slate-400'>
+                        <li><b>Giới hạn độ dài:</b> Yêu cầu AI trả lời dưới 25 từ để TTS đọc dứt khoát, không bị dài dòng.</li>
+                        <li><b>Cá tính hóa:</b> Đặt tên xưng hô rõ ràng (Em/Quản đốc/Caster F1/Bartender).</li>
+                        <li><b>Kêu gọi tương tác:</b> Nhắc người xem bình luận từ khóa, thả tim hoặc tặng quà tiếp Nitro/nhận ảnh.</li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Modal Footer Buttons */}
+              <div className='flex items-center justify-between pt-3 border-t border-slate-800'>
+                <div className='text-[11px] text-slate-500'>
+                  {settingsSavedToast ? '✅ Đã lưu cấu hình tự động' : 'Tất cả thay đổi đều được lưu vào máy'}
+                </div>
+
+                <div className='flex items-center gap-2'>
+                  <button
+                    onClick={() => setShowSettingsModal(false)}
+                    className='rounded-xl border border-slate-800 px-4 py-2 text-xs font-semibold text-slate-400 hover:bg-slate-800 hover:text-white transition cursor-pointer'
+                  >
+                    Đóng
+                  </button>
+                  <button
+                    onClick={async () => {
+                      await handleSaveConfigs()
+                      await updateAiConfig({})
+                      showNotice('✅ Đã lưu toàn bộ cấu hình')
+                    }}
+                    className='rounded-xl bg-cyan-500 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-cyan-400 transition shadow flex items-center gap-1.5 cursor-pointer'
+                  >
+                    {settingsSavedToast ? '✅ Đã Lưu Thành Công' : '💾 Lưu Cấu Hình'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </div>

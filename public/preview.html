@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>OBS LIVE STREAM OVERLAY PREVIEW</title>
+  <link rel="stylesheet" href="/overlay.css" />
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {
@@ -19,26 +20,196 @@
       display: block;
       background: transparent;
     }
+    /* Floating Mini YouTube & BGM Player for OBS Preview */
+    #yt-box {
+      position: fixed;
+      right: 12px;
+      bottom: 12px;
+      width: 220px;
+      height: 124px;
+      background: #090d16;
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 10px;
+      overflow: hidden;
+      z-index: 999999;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+      transition: all 0.25s ease;
+      display: none;
+    }
+    #yt-box.show {
+      display: block;
+    }
+    #yt-box.mini {
+      height: 28px;
+      width: 130px;
+      opacity: 0.85;
+    }
+    #yt-box .header {
+      height: 24px;
+      background: rgba(15,23,42,0.95);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 8px;
+      font-family: sans-serif;
+      font-size: 10px;
+      color: #94a3b8;
+    }
+    #yt-box .header button {
+      background: none;
+      border: none;
+      color: #cbd5e1;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    #yt-bgm-frame {
+      width: 100%;
+      height: calc(100% - 24px);
+      border: none;
+      display: block;
+    }
+    /* Autoplay Unlocker Banner (If Chrome blocks background audio) */
+    #audio-unlock-banner {
+      position: fixed;
+      top: 12px;
+      right: 12px;
+      background: rgba(245, 158, 11, 0.95);
+      color: #0f172a;
+      font-family: sans-serif;
+      font-size: 11px;
+      font-weight: bold;
+      padding: 6px 12px;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      cursor: pointer;
+      z-index: 1000000;
+      display: none;
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.85; transform: scale(1.03); }
+    }
   </style>
 </head>
 <body>
   <iframe id="template-frame" allow="autoplay; cross-origin-isolated" allowtransparency="true"></iframe>
 
+  <div id="audio-unlock-banner" onclick="unlockAudio()">
+    🔊 Nhấp vào đây để bật âm thanh
+  </div>
+
   <!-- Background Music Player for OBS Preview Stream -->
   <audio id="bgm-audio" preload="auto"></audio>
-  <div id="yt-container" style="position: fixed; width: 1px; height: 1px; left: -9999px; bottom: 0; opacity: 0; pointer-events: none; overflow: hidden;">
-    <iframe id="yt-bgm-frame" allow="autoplay" style="width: 200px; height: 200px;"></iframe>
+
+  <div id="yt-box">
+    <div class="header">
+      <span>🎵 YouTube BGM</span>
+      <button onclick="toggleYtMini()" title="Thu nhỏ / Mở rộng" id="btn-mini">_</button>
+    </div>
+    <iframe id="yt-bgm-frame" allow="autoplay; encrypted-media; picture-in-picture"></iframe>
   </div>
 
   <script>
     const frame = document.getElementById('template-frame');
     const bgmAudio = document.getElementById('bgm-audio');
+    const ytBox = document.getElementById('yt-box');
     const ytBgmFrame = document.getElementById('yt-bgm-frame');
+    const unlockBanner = document.getElementById('audio-unlock-banner');
     const params = new URLSearchParams(location.search);
     const streamKey = params.get('key') || 'live_default';
     let currentTemplateId = '';
     let currentYtId = '';
     let currentMusicState = null;
+    let audioUnlocked = false;
+    let isDucking = false;
+    let duckTimeout = null;
+    const ttsAudioPlayer = new Audio();
+
+    function duckMusic(enable) {
+      if (duckTimeout) {
+        clearTimeout(duckTimeout);
+        duckTimeout = null;
+      }
+
+      if (!currentMusicState) return;
+      const baseVol = typeof currentMusicState.volume === 'number' ? currentMusicState.volume : 70;
+
+      if (enable) {
+        isDucking = true;
+        const duckedVol = Math.max(5, Math.round(baseVol * 0.18));
+        if (bgmAudio) bgmAudio.volume = duckedVol / 100;
+        sendYtCommand('setVolume', [duckedVol]);
+
+        duckTimeout = setTimeout(() => {
+          duckMusic(false);
+        }, 15000);
+      } else {
+        isDucking = false;
+        if (bgmAudio) bgmAudio.volume = baseVol / 100;
+        sendYtCommand('setVolume', [baseVol]);
+      }
+    }
+
+    function playTtsAudio(msg) {
+      if (!msg || !msg.text) return;
+      const shouldDuck = msg.duckMusic !== false;
+
+      try {
+        if (msg.engine === 'webspeech' && 'speechSynthesis' in window) {
+          window.speechSynthesis.cancel();
+          const utter = new SpeechSynthesisUtterance(msg.text);
+          utter.lang = msg.voice || 'vi-VN';
+          utter.rate = msg.speed || 1.0;
+          utter.volume = typeof msg.volume === 'number' ? msg.volume : 1.0;
+
+          if (shouldDuck) {
+            utter.onstart = () => duckMusic(true);
+            utter.onend = () => duckMusic(false);
+            utter.onerror = () => duckMusic(false);
+          }
+          window.speechSynthesis.speak(utter);
+        } else if (msg.audioUrl) {
+          ttsAudioPlayer.pause();
+          ttsAudioPlayer.src = msg.audioUrl;
+          ttsAudioPlayer.volume = typeof msg.volume === 'number' ? msg.volume : 1.0;
+          ttsAudioPlayer.playbackRate = msg.speed || 1.0;
+
+          if (shouldDuck) {
+            ttsAudioPlayer.onplay = () => duckMusic(true);
+            ttsAudioPlayer.onended = () => duckMusic(false);
+            ttsAudioPlayer.onerror = () => duckMusic(false);
+          }
+          ttsAudioPlayer.play().catch(() => {
+            if (shouldDuck) duckMusic(false);
+          });
+        }
+      } catch (err) {
+        console.warn('TTS playback error:', err);
+        if (shouldDuck) duckMusic(false);
+      }
+    }
+
+    function toggleYtMini() {
+      ytBox.classList.toggle('mini');
+      const isMini = ytBox.classList.contains('mini');
+      document.getElementById('btn-mini').textContent = isMini ? '□' : '_';
+    }
+
+    function unlockAudio() {
+      audioUnlocked = true;
+      unlockBanner.style.display = 'none';
+      if (bgmAudio && bgmAudio.src) {
+        bgmAudio.play().catch(() => {});
+      }
+      if (currentYtId) {
+        sendYtCommand('playVideo');
+      }
+    }
+
+    document.addEventListener('click', () => {
+      if (!audioUnlocked) unlockAudio();
+    });
 
     // Control YouTube iframe via postMessage
     function sendYtCommand(func, args) {
@@ -56,6 +227,7 @@
 
       const isPlaying = !!music.isPlaying;
       const vol = typeof music.volume === 'number' ? music.volume : 70;
+      const effectiveVol = isDucking ? Math.max(5, Math.round(vol * 0.18)) : vol;
       const isLoop = music.isLoop !== false;
 
       if (music.sourceType === 'youtube' && music.youtubeId) {
@@ -65,13 +237,15 @@
           bgmAudio.src = '';
         }
 
+        ytBox.classList.add('show');
+
         if (currentYtId !== music.youtubeId) {
           currentYtId = music.youtubeId;
-          ytBgmFrame.src = `https://www.youtube.com/embed/${music.youtubeId}?enablejsapi=1&autoplay=1&loop=1&playlist=${music.youtubeId}&origin=${encodeURIComponent(location.origin)}`;
+          ytBgmFrame.src = `https://www.youtube.com/embed/${music.youtubeId}?enablejsapi=1&autoplay=1&mute=0&loop=1&playlist=${music.youtubeId}&origin=${encodeURIComponent(location.origin)}`;
         }
 
         setTimeout(() => {
-          sendYtCommand('setVolume', [vol]);
+          sendYtCommand('setVolume', [effectiveVol]);
           if (isPlaying) {
             sendYtCommand('playVideo');
           } else {
@@ -86,17 +260,27 @@
           ytBgmFrame.src = 'about:blank';
           currentYtId = '';
         }
+        ytBox.classList.remove('show');
 
-        if (music.url) {
-          const targetUrl = new URL(music.url, location.origin).href;
-          if (bgmAudio.src !== targetUrl) {
-            bgmAudio.src = targetUrl;
+        let targetUrl = music.url || '';
+        // If online MP3 URL, use server audio-proxy to avoid CORS/Hotlink blocks
+        if (music.sourceType === 'mp3' && targetUrl.startsWith('http')) {
+          targetUrl = `/api/audio-proxy?url=${encodeURIComponent(targetUrl)}`;
+        }
+
+        if (targetUrl) {
+          const fullUrl = new URL(targetUrl, location.origin).href;
+          if (bgmAudio.src !== fullUrl) {
+            bgmAudio.src = fullUrl;
           }
-          bgmAudio.volume = vol / 100;
+          bgmAudio.volume = effectiveVol / 100;
           bgmAudio.loop = isLoop && (!music.playlist || music.playlist.length <= 1);
 
           if (isPlaying) {
-            bgmAudio.play().catch(e => console.log('BGM Autoplay notice:', e.message));
+            bgmAudio.play().catch(e => {
+              console.log('Autoplay blocked by browser policy:', e.message);
+              unlockBanner.style.display = 'block';
+            });
           } else {
             bgmAudio.pause();
           }
@@ -107,6 +291,7 @@
         // Stop all
         if (bgmAudio) bgmAudio.pause();
         if (currentYtId) sendYtCommand('pauseVideo');
+        ytBox.classList.remove('show');
       }
     }
 
@@ -147,12 +332,12 @@
         try {
           const msg = JSON.parse(event.data);
 
+          if (window.LiveOverlay && typeof window.LiveOverlay.handleMessage === 'function') {
+            window.LiveOverlay.handleMessage(msg);
+          }
+
           if (msg.type === 'INIT_STATE') {
-            const entryUrl = msg.entryUrl || (msg.templateId === 'lucky_wheel'
-              ? '/templates/lucky-wheel/index.html'
-              : msg.templateId === 'photo_wall'
-              ? '/templates/photo-wall/index.html'
-              : '/templates/print-booth-3d/index.html');
+            const entryUrl = msg.entryUrl || `/templates/${(msg.templateId || 'print_booth_3d').replace(/_/g, '-')}/index.html`;
             setTemplateUrl(entryUrl);
             currentTemplateId = msg.templateId || 'print_booth_3d';
           } else if (msg.type === 'CHANGE_TEMPLATE') {
@@ -162,6 +347,10 @@
             }
           } else if (msg.type === 'SET_MUSIC') {
             applyMusicState(msg.music);
+          } else if (msg.type === 'TTS_SPEAK') {
+            if (msg.playInObs !== false && msg.text) {
+              playTtsAudio(msg);
+            }
           }
         } catch (err) {}
       };
@@ -177,5 +366,6 @@
 
     connect();
   </script>
+  <script src="/overlay.js"></script>
 </body>
 </html>

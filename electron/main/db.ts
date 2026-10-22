@@ -51,6 +51,7 @@ class AppDatabase {
     }
 
     this.db = new DatabaseSync(file)
+    this.db.exec('PRAGMA journal_mode = WAL;')
     this.createTables()
   }
 
@@ -94,6 +95,11 @@ class AppDatabase {
         avatar TEXT,
         time TEXT NOT NULL,
         created_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS app_config (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
       );
 
       CREATE INDEX IF NOT EXISTS idx_queue_session ON queue_items(session_id);
@@ -174,6 +180,13 @@ class AppDatabase {
     delSession.run(id)
   }
 
+  public deleteAllSessions() {
+    if (!this.db) return
+    this.db.exec('DELETE FROM queue_items;')
+    this.db.exec('DELETE FROM activity_logs;')
+    this.db.exec('DELETE FROM sessions;')
+  }
+
   // Queue CRUD
   public getQueue(sessionId: string): DbQueueItem[] {
     if (!this.db) return []
@@ -235,6 +248,12 @@ class AppDatabase {
     stmt.run(id)
   }
 
+  public updateQueueItemVipAndPriority(id: number, isVip: number, priority: number) {
+    if (!this.db) return
+    const stmt = this.db.prepare('UPDATE queue_items SET is_vip = ?, priority = ? WHERE id = ?')
+    stmt.run(isVip, priority, id)
+  }
+
   public updateQueueComment(id: number, comment: string) {
     if (!this.db) return
     const stmt = this.db.prepare('UPDATE queue_items SET comment = ? WHERE id = ?')
@@ -245,6 +264,35 @@ class AppDatabase {
     if (!this.db) return
     const stmt = this.db.prepare('DELETE FROM queue_items WHERE session_id = ?')
     stmt.run(sessionId)
+  }
+
+  public clearLogs(sessionId: string) {
+    if (!this.db) return
+    const stmt = this.db.prepare('DELETE FROM activity_logs WHERE session_id = ?')
+    stmt.run(sessionId)
+  }
+
+  // App Config Key-Value store (Proxy, API keys, Tunnel)
+  public getConfig(key: string, defaultValue = ''): string {
+    if (!this.db) return defaultValue
+    const row = this.db.prepare('SELECT value FROM app_config WHERE key = ?').get(key) as { value: string } | undefined
+    return row ? row.value : defaultValue
+  }
+
+  public setConfig(key: string, value: string) {
+    if (!this.db) return
+    this.db.prepare(`
+      INSERT INTO app_config (key, value) VALUES (?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run(key, value)
+  }
+
+  public getAllConfig(): Record<string, string> {
+    if (!this.db) return {}
+    const rows = this.db.prepare('SELECT key, value FROM app_config').all() as { key: string; value: string }[]
+    const result: Record<string, string> = {}
+    for (const r of rows) result[r.key] = r.value
+    return result
   }
 
   // Logs

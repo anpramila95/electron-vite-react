@@ -61,6 +61,17 @@ export default defineConfig(({ command }) => {
         // renderer: {},
       }),
     ],
+    server: {
+      watch: {
+        ignored: [
+          '**/*.sqlite',
+          '**/*.sqlite-journal',
+          '**/*.sqlite-wal',
+          '**/*.sqlite-shm',
+          '**/live-stream.sqlite*',
+        ],
+      },
+    },
     clearScreen: false,
   }
 })

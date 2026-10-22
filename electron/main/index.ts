@@ -1,4 +1,5 @@
 import { app, BrowserWindow, shell, ipcMain, dialog } from 'electron'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
@@ -9,6 +10,7 @@ import { startLocalServer, type ServerInstance } from './server'
 import { db } from './db'
 import { TikTokManager, LiveSessionInstance } from './tiktok'
 import { loadAllTemplates, getTemplateById } from './templates'
+import { LiveAIEngine, DEFAULT_TEMPLATE_PROMPTS } from './ai-engine'
 
 const require = createRequire(import.meta.url)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -38,6 +40,7 @@ const indexHtml = path.join(RENDERER_DIST, 'index.html')
 
 let localServer: ServerInstance | null = null
 let tiktokManager: TikTokManager | null = null
+let aiEngine: LiveAIEngine | null = null
 
 async function createWindow() {
   win = new BrowserWindow({
@@ -78,6 +81,12 @@ async function createWindow() {
       win.webContents.send('session:event', { event, data })
     }
 
+    // Pass log to AI Engine for batch processing & TTS
+    if (event === 'log' && data?.log && aiEngine) {
+      const targetSession = data.sessionKey ? tiktokManager?.getSessionByStreamKey(data.sessionKey) : undefined
+      aiEngine.handleLog(targetSession?.templateId || 'print_booth_3d', data.log)
+    }
+
     // Broadcast to matching OBS overlay via WebSocket
     if (localServer && data?.sessionKey) {
       const sessionKey = data.sessionKey
@@ -89,6 +98,10 @@ async function createWindow() {
             name: data.user.name,
             photoUrl: data.user.photoUrl ? `/api/proxy-img?url=${encodeURIComponent(data.user.photoUrl)}` : '',
             isVip: !!data.user.isVip,
+            priority: data.user.priority || 0,
+            source: data.user.source || 'chat',
+            comment: data.user.comment || '',
+            giftName: data.user.giftName || '',
           },
         })
       } else if (event === 'user_removed') {
@@ -115,7 +128,32 @@ async function createWindow() {
           type: 'SET_SETTINGS',
           settings: data.settings,
         })
+      } else if (event === 'log' && data?.log) {
+        localServer.broadcastToKey(sessionKey, {
+          type: 'ADD_LOG',
+          log: {
+            id: data.log.id,
+            type: data.log.type,
+            userName: data.log.user || data.log.user_name || 'Khán giả',
+            message: data.log.message,
+            avatarUrl: data.log.avatar ? `/api/proxy-img?url=${encodeURIComponent(data.log.avatar)}` : '',
+            createdAt: data.log.created_at,
+          },
+        })
       }
+    }
+  })
+
+  // 4. Initialize AI Engine & TTS Broadcaster
+  aiEngine = new LiveAIEngine((payload) => {
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('ai:speak', payload)
+    }
+    if (localServer) {
+      localServer.broadcastAll({
+        type: 'TTS_SPEAK',
+        ...payload,
+      })
     }
   })
 
@@ -124,6 +162,14 @@ async function createWindow() {
     const sendSessionInit = (ws: any, session: LiveSessionInstance) => {
       if (ws.readyState === 1) {
         const tmpl = getTemplateById(session.templateId, process.env.VITE_PUBLIC)
+        const recentLogs = db.getLogs(session.id, 100).reverse().map((l) => ({
+          id: l.id,
+          type: l.type,
+          userName: l.user,
+          message: l.message,
+          avatarUrl: l.avatar ? `/api/proxy-img?url=${encodeURIComponent(l.avatar)}` : '',
+          createdAt: l.created_at,
+        }))
         ws.send(
           JSON.stringify({
             type: 'INIT_STATE',
@@ -131,6 +177,7 @@ async function createWindow() {
             templateId: session.templateId,
             entryUrl: `/${tmpl?.entryFile || 'templates/print-booth-3d/index.html'}`,
             settings: session.settings,
+            logs: recentLogs,
             queue: session.getQueue().map((q) => ({
               id: q.id,
               name: q.name,
@@ -196,6 +243,12 @@ async function createWindow() {
                 user: parsed.user,
               },
             })
+          } else if (parsed.type === 'CLEAR_QUEUE') {
+            const currentKey = parsed.streamKey || streamKey
+            const target = tiktokManager?.getSessionByStreamKey(currentKey)
+            if (target) {
+              target.clearQueue()
+            }
           } else if (parsed.type === 'USER_PRINTED' && parsed.userId) {
             const currentKey = parsed.streamKey || streamKey
             const target = tiktokManager?.getSessionByStreamKey(currentKey)
@@ -295,6 +348,11 @@ ipcMain.handle('sessions:create', (_, data) => {
 // Delete session
 ipcMain.handle('sessions:delete', (_, id: string) => {
   tiktokManager?.deleteSession(id)
+  return { success: true }
+})
+
+ipcMain.handle('sessions:delete-all', () => {
+  tiktokManager?.deleteAllSessions()
   return { success: true }
 })
 
@@ -475,9 +533,173 @@ ipcMain.handle('control:send-action', (_, { streamKey, action, value }) => {
   return { success: true }
 })
 
+// ==================== CLOUDFLARE QUICK TUNNEL & APP CONFIG ====================
+let tunnelProcess: ChildProcess | null = null
+let currentTunnelUrl = ''
+let isStartingTunnel = false
+
+function stopTunnel() {
+  if (tunnelProcess) {
+    try {
+      tunnelProcess.kill()
+    } catch (_) {}
+    tunnelProcess = null
+  }
+  currentTunnelUrl = ''
+  isStartingTunnel = false
+}
+
+function startTunnel(port = 3210): Promise<{ success: boolean; url?: string; error?: string }> {
+  return new Promise((resolve) => {
+    if (currentTunnelUrl && tunnelProcess) {
+      resolve({ success: true, url: currentTunnelUrl })
+      return
+    }
+
+    stopTunnel()
+    isStartingTunnel = true
+
+    try {
+      tunnelProcess = spawn('cloudflared', ['tunnel', '--url', `http://localhost:${port}`], {
+        windowsHide: true,
+      })
+
+      let resolved = false
+      const timeout = setTimeout(() => {
+        if (!resolved) {
+          resolved = true
+          isStartingTunnel = false
+          if (currentTunnelUrl) {
+            resolve({ success: true, url: currentTunnelUrl })
+          } else {
+            resolve({ success: false, error: 'Hết thời gian chờ tạo Cloudflare Tunnel (15s)' })
+          }
+        }
+      }, 15000)
+
+      const onData = (data: Buffer) => {
+        const text = data.toString()
+        const match = text.match(/https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/)
+        if (match && !resolved) {
+          resolved = true
+          clearTimeout(timeout)
+          currentTunnelUrl = match[0]
+          isStartingTunnel = false
+          resolve({ success: true, url: currentTunnelUrl })
+        }
+      }
+
+      tunnelProcess.stdout?.on('data', onData)
+      tunnelProcess.stderr?.on('data', onData)
+
+      tunnelProcess.on('error', (err) => {
+        if (!resolved) {
+          resolved = true
+          clearTimeout(timeout)
+          isStartingTunnel = false
+          resolve({
+            success: false,
+            error: `Không thể chạy cloudflared: ${err.message}.`,
+          })
+        }
+      })
+
+      tunnelProcess.on('exit', () => {
+        tunnelProcess = null
+        currentTunnelUrl = ''
+        isStartingTunnel = false
+      })
+    } catch (err: any) {
+      isStartingTunnel = false
+      resolve({ success: false, error: err.message })
+    }
+  })
+}
+
+ipcMain.handle('tunnel:get-status', () => {
+  return { active: !!currentTunnelUrl, url: currentTunnelUrl, starting: isStartingTunnel }
+})
+
+ipcMain.handle('tunnel:toggle', async () => {
+  if (currentTunnelUrl) {
+    stopTunnel()
+    return { active: false, url: '' }
+  } else {
+    const port = localServer ? localServer.port : 3210
+    const res = await startTunnel(port)
+    return { active: res.success, url: res.url || '', error: res.error }
+  }
+})
+
+ipcMain.handle('config:get-all', () => {
+  return db.getAllConfig()
+})
+
+ipcMain.handle('config:set', (_, { key, value }) => {
+  db.setConfig(key, value)
+  return { success: true }
+})
+
+ipcMain.handle('euler:check-usage', async (_, { apiKey, apiUrl }: { apiKey?: string; apiUrl?: string } = {}) => {
+  try {
+    const base = apiUrl?.trim() || db.getConfig('signApiUrl') || 'https://api.eulerstream.com'
+    const key = apiKey !== undefined ? apiKey.trim() : (db.getConfig('signApiKey') || '').trim()
+    const url = new URL('/accounts/me/rate_limits', base)
+    const headers: Record<string, string> = { Accept: 'application/json' }
+    if (key) {
+      headers['x-api-key'] = key
+    }
+    const res = await fetch(url.toString(), {
+      headers,
+      signal: AbortSignal.timeout(8000),
+    })
+    const data: any = await res.json()
+    if (!res.ok || data.code !== 200) {
+      return {
+        success: false,
+        error: data.message || `Lỗi HTTP ${res.status}`,
+      }
+    }
+    return {
+      success: true,
+      data: {
+        day: data.day,
+        hour: data.hour,
+        minute: data.minute,
+        isCustomKey: Boolean(key),
+      },
+    }
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err.message || 'Không thể kết nối đến EulerStream API',
+    }
+  }
+})
+
+// ==================== AI & TTS IPC HANDLERS ====================
+ipcMain.handle('ai:get-config', () => {
+  return {
+    config: aiEngine ? aiEngine.getConfig() : null,
+    defaultPrompts: DEFAULT_TEMPLATE_PROMPTS,
+  }
+})
+
+ipcMain.handle('ai:update-config', (_, partial) => {
+  if (!aiEngine) return { success: false }
+  aiEngine.updateConfig(partial)
+  return { success: true, config: aiEngine.getConfig() }
+})
+
+ipcMain.handle('ai:test-speak', (_, { text, templateId }: { text?: string; templateId?: string } = {}) => {
+  if (!aiEngine) return null
+  return aiEngine.testSpeak(text, templateId)
+})
+
 app.whenReady().then(createWindow)
 
 app.on('window-all-closed', () => {
+  stopTunnel()
   tiktokManager?.stopAll()
   localServer?.close()
   win = null

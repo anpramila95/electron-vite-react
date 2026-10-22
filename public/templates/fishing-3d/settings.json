@@ -1,0 +1,145 @@
+{
+  "id": "fishing_3d",
+  "name": "Câu Cá Avatar 3D (Fisherman King)",
+  "description": "Đấu trường câu cá 3D tương tác. VIP và điểm càng cao câu cá càng to khổng lồ (Cá Rồng, Cá Mập, Cá Voi Thần Thoại). Bảng xếp hạng chiến tích thời gian thực.",
+  "icon": "🎣",
+  "badge": "Three.js 3D",
+  "features": [
+    "Đồ họa Three.js 3D mặt nước sóng chân thực đỉnh cao",
+    "VIP & điểm càng cao câu cá càng to khổng lồ",
+    "Bảng xếp hạng Cần Thủ Vàng theo thời gian thực",
+    "5 Bản đồ câu: Sông Quê, Hồ Hoàng Hôn, Biển Khơi, Băng Cực, Đầm Lầy Đêm",
+    "Tùy chỉnh số người hiển thị trên màn hình (1 - 100 người)",
+    "Dây câu uốn cong lực thực tế & hiệu ứng bọt nước tung tóe"
+  ],
+  "settingsSchema": [
+    {
+      "key": "maxAnglers",
+      "label": "Số cần thủ tối đa hiển thị (1 - 100 người)",
+      "type": "range",
+      "defaultValue": 20,
+      "min": 1,
+      "max": 100,
+      "step": 1,
+      "unit": "người"
+    },
+    {
+      "key": "mapTheme",
+      "label": "Bản đồ & Môi trường câu cá",
+      "type": "select",
+      "defaultValue": "river",
+      "options": [
+        { "label": "🌿 Sông Lam Xanh Mát (River Nature)", "value": "river" },
+        { "label": "🌅 Hồ Hoàng Hôn Lãng Mạn (Sunset Lake)", "value": "lake" },
+        { "label": "🌊 Biển Khơi Đại Dương (Deep Ocean)", "value": "ocean" },
+        { "label": "❄️ Hồ Băng Cực Bắc (Arctic Ice)", "value": "ice" },
+        { "label": "🌌 Đầm Lầy Đêm Neon (Mystic Night)", "value": "mystic" }
+      ]
+    },
+    {
+      "key": "catchSpeed",
+      "label": "Nhịp độ cá cắn câu",
+      "type": "buttons",
+      "defaultValue": "normal",
+      "options": [
+        { "label": "Chậm (Thực tế)", "value": "slow" },
+        { "label": "Vừa phải (Chuẩn)", "value": "normal" },
+        { "label": "Nhanh (Sôi động)", "value": "fast" }
+      ]
+    },
+    {
+      "key": "fishDensity",
+      "label": "Mật độ cá bơi lội dưới nước",
+      "type": "range",
+      "defaultValue": 30,
+      "min": 10,
+      "max": 80,
+      "step": 5,
+      "unit": "con"
+    },
+    {
+      "key": "enableAudio",
+      "label": "Âm thanh môi trường, kéo cước & nước văng (SFX)",
+      "type": "boolean",
+      "defaultValue": true
+    },
+    {
+      "key": "showCameraBar",
+      "label": "Hiển thị thanh chuyển góc camera trên màn hình",
+      "type": "boolean",
+      "defaultValue": true
+    },
+    {
+      "key": "showComments",
+      "label": "Hiển thị bình luận trên màn hình (Live Chat)",
+      "type": "boolean",
+      "defaultValue": true
+    },
+    {
+      "key": "showTopUsers",
+      "label": "Hiển thị Top tương tác (Top người dùng)",
+      "type": "boolean",
+      "defaultValue": false
+    },
+    {
+      "key": "showGifts",
+      "label": "Hiển thị quà tặng trên màn hình (Gifts)",
+      "type": "boolean",
+      "defaultValue": true
+    }
+  ],
+  "actions": [
+    {
+      "id": "cast_all",
+      "label": "TẤT CẢ QUĂNG CÂU",
+      "icon": "🎣",
+      "variant": "accent",
+      "actionKey": "cast_all",
+      "group": "fishing_actions"
+    },
+    {
+      "id": "bite_vip",
+      "label": "VIP CẮN CÂU CÁ KHỦNG",
+      "icon": "🐋",
+      "variant": "warning",
+      "actionKey": "bite_vip",
+      "group": "fishing_actions"
+    },
+    {
+      "id": "reset_scores",
+      "label": "Làm mới bảng xếp hạng",
+      "icon": "🔄",
+      "variant": "secondary",
+      "actionKey": "reset_scores",
+      "group": "fishing_actions"
+    },
+    {
+      "id": "cam_overview",
+      "label": "Toàn cảnh hồ",
+      "actionKey": "change_camera",
+      "payload": "overview",
+      "group": "camera_views"
+    },
+    {
+      "id": "cam_top1",
+      "label": "Bám cần thủ Top 1",
+      "actionKey": "change_camera",
+      "payload": "top1",
+      "group": "camera_views"
+    },
+    {
+      "id": "cam_water",
+      "label": "Góc mặt nước",
+      "actionKey": "change_camera",
+      "payload": "water",
+      "group": "camera_views"
+    },
+    {
+      "id": "cam_fly",
+      "label": "Flycam trên cao",
+      "actionKey": "change_camera",
+      "payload": "fly",
+      "group": "camera_views"
+    }
+  ]
+}

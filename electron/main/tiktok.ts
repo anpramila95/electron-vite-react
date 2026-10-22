@@ -41,27 +41,41 @@ const getBestAvatar = (user: any): string => {
   if (!user) return ''
   if (typeof user === 'string' && user.startsWith('http')) return user
 
-  const directUrl =
+  // 1. ƯU TIÊN SỐ 1: avatarLarge (ảnh độ phân giải cao nhất do TikTok CDN trả về)
+  const large =
+    user.avatarLarge?.urlList?.[0] ||
+    user.avatar_large?.url_list?.[0] ||
+    (Array.isArray(user.avatarLarge) ? user.avatarLarge[0] : '')
+
+  if (typeof large === 'string' && large.startsWith('http')) {
+    return large
+  }
+
+  // 2. ƯU TIÊN SỐ 2: avatarMedium (ảnh kích thước trung bình 200x200 / 300x300)
+  const medium =
+    user.avatarMedium?.urlList?.[0] ||
+    user.avatar_medium?.url_list?.[0] ||
+    (Array.isArray(user.avatarMedium) ? user.avatarMedium[0] : '')
+
+  if (typeof medium === 'string' && medium.startsWith('http')) {
+    return medium
+  }
+
+  // 3. Fallback: avatarThumb hoặc profilePictureUrl (nếu chỉ có ảnh 72x72)
+  const fallback =
+    user.avatar?.urlList?.[0] ||
+    user.profilePictureUrls?.[0] ||
     user.profilePictureUrl ||
     user.avatarUrl ||
     user.avatar ||
     user.picture ||
+    user.avatarThumb?.urlList?.[0] ||
+    user.avatar_thumb?.url_list?.[0] ||
+    (Array.isArray(user.avatarThumb) ? user.avatarThumb[0] : '') ||
     user.avatarThumbUrl ||
     ''
 
-  if (typeof directUrl === 'string' && directUrl.startsWith('http')) {
-    return directUrl
-  }
-
-  return (
-    user.avatarLarge?.urlList?.[0] ||
-    user.avatarMedium?.urlList?.[0] ||
-    user.avatarThumb?.urlList?.[0] ||
-    (Array.isArray(user.avatarThumb) ? user.avatarThumb[0] : '') ||
-    user.profilePictureUrls?.[0] ||
-    user.avatar?.urlList?.[0] ||
-    ''
-  )
+  return typeof fallback === 'string' && fallback.startsWith('http') ? fallback : ''
 }
 
 export class LiveSessionInstance {
@@ -79,6 +93,42 @@ export class LiveSessionInstance {
   private likeCount = 0
   private totalViewers = 0
   private onBroadcast: (event: string, data: any) => void
+  private currentProxy = ''
+  private lastFailedProxies = new Set<string>()
+
+  private pickProxy(): string {
+    const raw = db.getConfig('proxyUrl')
+    if (!raw) return ''
+    const list = raw
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => Boolean(l) && !l.startsWith('#'))
+    if (list.length === 0) return ''
+
+    const available = list.filter((p) => !this.lastFailedProxies.has(p))
+    const pool = available.length > 0 ? available : list
+    if (available.length === 0) this.lastFailedProxies.clear()
+
+    const picked = pool[Math.floor(Math.random() * pool.length)]
+    this.currentProxy = picked
+    return picked
+  }
+
+  public rotateProxy(failedReason?: string): string {
+    if (this.currentProxy) {
+      this.lastFailedProxies.add(this.currentProxy)
+    }
+    const next = this.pickProxy()
+    if (next) {
+      const masked = next.replace(/:\/\/[^@]*@/, '://***:***@')
+      this.addLog(
+        'system',
+        'Đổi Proxy',
+        `Chuyển sang Proxy: ${masked} (${failedReason || 'Luân phiên tự động'})`,
+      )
+    }
+    return next
+  }
 
   // 24/7 Auto-retry & Reconnect engine
   private shouldRun = false
@@ -238,8 +288,31 @@ export class LiveSessionInstance {
         fetchRoomInfoOnConnect: false,
       }
 
-      if (this.tiktokConfig.signApiKey) {
-        opts.signApiKey = this.tiktokConfig.signApiKey.trim()
+      const globalApiKey = db.getConfig('signApiKey')
+      const globalSignUrl = db.getConfig('signApiUrl')
+
+      if (this.tiktokConfig.signApiKey || globalApiKey) {
+        opts.signApiKey = (this.tiktokConfig.signApiKey || globalApiKey).trim()
+      }
+
+      if (globalSignUrl) {
+        process.env.SIGN_API_URL = globalSignUrl.trim()
+      }
+
+      const proxyToUse = this.pickProxy()
+      if (proxyToUse) {
+        try {
+          const { HttpsProxyAgent } = require('https-proxy-agent')
+          const agent = new HttpsProxyAgent(proxyToUse.trim())
+          opts.webClientOptions = {
+            agent: {
+              http: agent,
+              https: agent,
+            },
+          }
+        } catch (e: any) {
+          console.error('[Proxy Agent Error]', e.message)
+        }
       }
 
       if (this.tiktokConfig.sessionId) {
@@ -312,20 +385,26 @@ export class LiveSessionInstance {
           data.gift?.name ||
           data.giftDetails?.giftName ||
           (data.giftId ? `Quà #${data.giftId}` : 'Món quà')
-        const diamonds = data.extendedGiftInfo?.diamondCount || data.gift?.diamondCount || 0
+        const unitDiamonds =
+          data.extendedGiftInfo?.diamondCount ||
+          data.gift?.diamondCount ||
+          (typeof data.diamondCount === 'number' ? data.diamondCount : 0) ||
+          (data.fanTicketCount ? Math.round(data.fanTicketCount / 2) : 0) ||
+          1
         const repeat = data.repeatCount || data.comboCount || 1
+        const totalDiamonds = unitDiamonds * repeat
 
         this.addLog(
           'gift',
           nickname,
-          `Tặng ${repeat > 1 ? `${repeat}x ` : ''}${giftName} ${diamonds ? `(${diamonds} xu)` : ''} 🎁`,
+          `Tặng ${repeat > 1 ? `${repeat}x ` : ''}${giftName} (${totalDiamonds} xu) 🎁`,
           avatar,
         )
 
         if (this.tiktokConfig.onGift) {
-          const isBigGift = diamonds >= (this.tiktokConfig.bigGiftThreshold || 10)
+          const isBigGift = totalDiamonds >= (this.tiktokConfig.bigGiftThreshold || 10)
           // Quà càng lớn priority càng cao vượt trội để lập tức lên #1 hàng chờ
-          const priority = isBigGift ? 10000 + diamonds : 2000 + diamonds
+          const priority = isBigGift ? 10000 + totalDiamonds : 2000 + totalDiamonds
 
           this.addToQueue({
             uniqueId,
@@ -504,16 +583,34 @@ export class LiveSessionInstance {
     }
   }
 
-  // Exponential backoff scheduler (2s -> 4s -> 8s -> ... -> 30s max)
+  // Exponential backoff scheduler (Rate limit aware)
   private scheduleRetry(reason: string) {
     if (!this.shouldRun) return
     if (this.retryTimer) clearTimeout(this.retryTimer)
 
+    const isRateLimited =
+      reason.toLowerCase().includes('rate limit') ||
+      reason.toLowerCase().includes('signatureratelimiterror') ||
+      reason.toLowerCase().includes('too many connections') ||
+      reason.toLowerCase().includes('429')
+
+    if (isRateLimited || reason.includes('Proxy') || reason.includes('socket')) {
+      this.rotateProxy('Gặp Rate Limit hoặc lỗi kết nối')
+    }
+
     this.retryCount++
-    const delay = Math.min(2000 * Math.pow(1.5, Math.min(this.retryCount, 8)), this.maxRetryDelay)
+
+    // If rate limited by EulerStream sign server: backoff at least 30s-60s
+    const baseDelay = isRateLimited ? 35000 : 2000
+    const maxDelay = isRateLimited ? 120000 : this.maxRetryDelay
+    const delay = Math.min(baseDelay * Math.pow(1.5, Math.min(this.retryCount, 6)), maxDelay)
     const seconds = (delay / 1000).toFixed(0)
 
-    this.addLog('system', 'Tự động kết nối lại', `${reason} (Thử lại sau ${seconds}s - Lần ${this.retryCount})`)
+    const notice = isRateLimited
+      ? `Bị giới hạn kết nối (Rate Limit từ EulerStream). Chờ ${seconds}s trước khi thử lại để tránh bị chặn. (Gợi ý: Thêm Proxy hoặc EulerStream API Key ở Cài đặt)`
+      : `${reason} (Thử lại sau ${seconds}s - Lần ${this.retryCount})`
+
+    this.addLog('system', isRateLimited ? 'Giới hạn tốc độ' : 'Tự động kết nối lại', notice)
 
     this.retryTimer = setTimeout(() => {
       const user = LiveSessionInstance.cleanUsername(this.tiktokConfig.username)
@@ -668,6 +765,12 @@ export class LiveSessionInstance {
         gift_name: item.giftName || null,
         created_at: Date.now(),
       })
+      this.addLog(
+        item.giftName ? 'gift' : 'chat',
+        item.name,
+        item.giftName ? `Tặng ${item.giftName} 🎁` : (item.comment || 'Vào hàng chờ'),
+        item.photoUrl,
+      )
     }
 
     const fullQueue = this.getQueue()
@@ -696,11 +799,46 @@ export class LiveSessionInstance {
   }
 
   public updateConfig(newConfig: Partial<TikTokConfig>) {
+    const oldThreshold = this.tiktokConfig.bigGiftThreshold
     this.tiktokConfig = { ...this.tiktokConfig, ...newConfig }
     if (this.tiktokConfig.username) {
       this.tiktokConfig.username = LiveSessionInstance.cleanUsername(this.tiktokConfig.username)
     }
     this.saveToDb()
+
+    // Tự động tính toán lại VIP & độ ưu tiên cho các người dùng hiện có trong hàng chờ
+    if (newConfig.bigGiftThreshold !== undefined && newConfig.bigGiftThreshold !== oldThreshold) {
+      this.recalculateQueueVip(newConfig.bigGiftThreshold)
+    }
+  }
+
+  public recalculateQueueVip(newThreshold: number) {
+    const queue = this.getQueue()
+    let changed = false
+
+    for (const item of queue) {
+      if (item.source === 'gift') {
+        // Trích xuất số xu thực tế từ priority đã lưu (10000 + diamonds hoặc 2000 + diamonds)
+        const diamonds = item.priority >= 10000 ? item.priority - 10000 : (item.priority >= 2000 ? item.priority - 2000 : 0)
+        const shouldBeVip = diamonds >= newThreshold
+        const newPriority = shouldBeVip ? 10000 + diamonds : 2000 + diamonds
+
+        if (item.is_vip !== (shouldBeVip ? 1 : 0) || item.priority !== newPriority) {
+          db.updateQueueItemVipAndPriority(item.id, shouldBeVip ? 1 : 0, newPriority)
+          changed = true
+        }
+      }
+    }
+
+    if (changed) {
+      const updatedQueue = this.getQueue()
+      this.onBroadcast('queue', { sessionKey: this.streamKey, queue: updatedQueue })
+      this.addLog(
+        'system',
+        'Cập nhật điều kiện VIP',
+        `Đã tính toán lại hàng chờ theo ngưỡng mới: Quà >= ${newThreshold} xu là VIP.`,
+      )
+    }
   }
 
   public saveToDb() {
@@ -771,55 +909,12 @@ export class TikTokManager {
 
   private loadSessionsFromDb() {
     const list = db.getAllSessions()
-    if (list.length === 0) {
-      const defaultId = 'session_default'
-      const defaultKey = 'live_default'
-      const defaultRec: SessionRecord = {
-        id: defaultId,
-        stream_key: defaultKey,
-        template_id: 'print_booth_3d',
-        name: 'Phiên Live Mặc Định #1',
-        username: 'hanh.huynhgomsu',
-        settings_json: JSON.stringify({
-          title: 'PRINT BOOTH 3D',
-          subtitle: 'in avatar tiktok theo mẫu',
-          theme: 0,
-          speed: 1.6,
-          cardsPerSheet: 6,
-          rare: true,
-          paused: false,
-          turbo: false,
-          rotate: false,
-        }),
-        tiktok_config_json: JSON.stringify({
-          username: 'hanh.huynhgomsu',
-          onJoin: true,
-          onChat: true,
-          chatKeywordOnly: false,
-          keyword: 'in, in anh, ve, avatar',
-          onGift: true,
-          bigGiftThreshold: 10,
-          onLike: false,
-          onShare: true,
-          allowDuplicates: false,
-        }),
-        status: 'idle',
-        created_at: Date.now(),
-        updated_at: Date.now(),
-      }
-      db.saveSession(defaultRec)
-      const instance = new LiveSessionInstance(defaultRec, this.onBroadcast)
-      this.sessions.set(defaultId, instance)
-    } else {
-      for (const rec of list) {
-        const instance = new LiveSessionInstance(rec, this.onBroadcast)
-        this.sessions.set(rec.id, instance)
-        // Auto-reconnect previously running sessions 24/7 on app startup
-        if (rec.status === 'running' && rec.username) {
-          setTimeout(() => {
-            instance.start().catch((err) => console.error('[AutoConnect Startup] Error:', err))
-          }, 1500)
-        }
+    for (const rec of list) {
+      const instance = new LiveSessionInstance(rec, this.onBroadcast)
+      this.sessions.set(rec.id, instance)
+      // Auto-reconnect previously running sessions 24/7 on app startup
+      if (instance.status === 'running') {
+        instance.start()
       }
     }
   }
@@ -896,8 +991,18 @@ export class TikTokManager {
     if (session) {
       session.stop()
       this.sessions.delete(id)
-      db.deleteSession(id)
     }
+    db.deleteSession(id)
+  }
+
+  public deleteAllSessions() {
+    for (const [, session] of this.sessions) {
+      try {
+        session.stop()
+      } catch (_) {}
+    }
+    this.sessions.clear()
+    db.deleteAllSessions()
   }
 
   public stopAll() {

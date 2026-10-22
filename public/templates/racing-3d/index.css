@@ -1,0 +1,464 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: #050811;
+  font-family: 'Space Grotesk', -apple-system, sans-serif;
+  color: #f8fafc;
+  user-select: none;
+}
+
+#game-canvas-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+}
+
+#three-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* In-Game HUD */
+.hud {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 10;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 16px 20px;
+}
+
+.hud-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  pointer-events: auto;
+}
+
+.brand-box {
+  background: rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  padding: 8px 14px;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
+}
+
+.brand-box h1 {
+  font-family: 'Archivo Black', sans-serif;
+  font-size: 16px;
+  letter-spacing: 0.5px;
+  color: #ffffff;
+}
+
+.brand-box h1 em {
+  font-style: normal;
+  color: #38bdf8;
+  text-shadow: 0 0 10px rgba(56, 189, 248, 0.6);
+}
+
+.brand-box .sub {
+  font-size: 10.5px;
+  color: #94a3b8;
+  margin-top: 2px;
+}
+
+.stats-pills {
+  display: flex;
+  gap: 8px;
+}
+
+.pill {
+  background: rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  padding: 6px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 65px;
+}
+
+.pill span {
+  font-size: 8.5px;
+  font-weight: 700;
+  color: #64748b;
+  letter-spacing: 0.5px;
+}
+
+.pill b {
+  font-size: 13px;
+  font-weight: 800;
+  color: #f8fafc;
+}
+
+.pill-btn {
+  cursor: pointer;
+  transition: all 0.2s ease;
+  outline: none;
+}
+
+.pill-btn:hover {
+  background: rgba(30, 41, 59, 0.95);
+  border-color: rgba(56, 189, 248, 0.4);
+  transform: translateY(-1px);
+}
+
+.status-racing {
+  color: #10b981 !important;
+  text-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
+}
+
+.status-ready {
+  color: #f59e0b !important;
+}
+
+/* Sidebar Leaderboard */
+.leaderboard-sidebar {
+  position: absolute;
+  top: 75px;
+  left: 20px;
+  width: 230px;
+  max-height: calc(100vh - 150px);
+  background: rgba(10, 15, 29, 0.85);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.lbl-header {
+  background: rgba(15, 23, 42, 0.95);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  color: #38bdf8;
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.racers-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 6px;
+  overflow-y: auto;
+  max-height: calc(100vh - 190px);
+}
+
+.racers-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.racers-list::-webkit-scrollbar-thumb {
+  background: rgba(56, 189, 248, 0.4);
+  border-radius: 4px;
+}
+
+.racer-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid transparent;
+  transition: all 0.2s;
+}
+
+.racer-row.rank-1 {
+  background: linear-gradient(90deg, rgba(234, 179, 8, 0.2) 0%, rgba(234, 179, 8, 0.04) 100%);
+  border-color: rgba(234, 179, 8, 0.5);
+}
+
+.racer-pos {
+  font-size: 11px;
+  font-weight: 800;
+  width: 18px;
+  color: #cbd5e1;
+}
+
+.rank-1 .racer-pos { color: #facc15; }
+
+.racer-img {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1.5px solid #38bdf8;
+  object-fit: cover;
+  background: #1e293b;
+}
+
+.racer-name {
+  font-size: 11px;
+  font-weight: 700;
+  color: #f1f5f9;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.racer-nitro-tag {
+  font-size: 9px;
+  font-weight: 800;
+  color: #f59e0b;
+  display: none;
+}
+
+.racer-row.is-nitro .racer-nitro-tag {
+  display: inline-block;
+}
+
+/* Camera Bar */
+.camera-bar {
+  display: flex;
+  gap: 6px;
+  align-self: center;
+  background: rgba(10, 15, 29, 0.8);
+  backdrop-filter: blur(8px);
+  padding: 4px 6px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  pointer-events: auto;
+}
+
+.cam-btn {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 5px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.cam-btn:hover {
+  color: #ffffff;
+}
+
+.cam-btn.active {
+  background: #0284c7;
+  color: #ffffff;
+  box-shadow: 0 0 10px rgba(2, 132, 199, 0.5);
+}
+
+.cam-close-btn {
+  color: #64748b;
+  padding: 5px 8px;
+  font-size: 10px;
+}
+.cam-close-btn:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.15);
+}
+
+.cam-restore-btn {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(10, 15, 29, 0.85);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #cbd5e1;
+  font-size: 14px;
+  padding: 6px 12px;
+  border-radius: 20px;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: all 0.2s;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+.cam-restore-btn:hover {
+  background: #0284c7;
+  color: #ffffff;
+  transform: translateX(-50%) scale(1.08);
+}
+
+/* Nitro Banner */
+.nitro-banner {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-60px);
+  background: linear-gradient(90deg, #d97706, #ef4444);
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 900;
+  padding: 8px 18px;
+  border-radius: 30px;
+  box-shadow: 0 4px 20px rgba(239, 68, 68, 0.6);
+  opacity: 0;
+  transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  pointer-events: none;
+  z-index: 100;
+}
+
+.nitro-banner.show {
+  transform: translateX(-50%) translateY(0);
+  opacity: 1;
+}
+
+/* Podium Winner Modal */
+.podium-modal {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(5, 8, 17, 0.85);
+  backdrop-filter: blur(12px);
+  z-index: 50;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.podium-modal.show {
+  display: flex;
+  opacity: 1;
+}
+
+.podium-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.trophy-icon {
+  font-size: 42px;
+  animation: bounce 1s infinite alternate;
+}
+
+@keyframes bounce {
+  from { transform: translateY(0); }
+  to { transform: translateY(-8px); }
+}
+
+.podium-content h2 {
+  font-family: 'Archivo Black', sans-serif;
+  font-size: 24px;
+  color: #facc15;
+  text-shadow: 0 0 16px rgba(250, 204, 21, 0.5);
+  margin: 6px 0 20px 0;
+}
+
+.podium-grid {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  height: 220px;
+}
+
+.podium-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100px;
+}
+
+.podium-avatar-wrap {
+  position: relative;
+  margin-bottom: 8px;
+}
+
+.podium-avatar-wrap img {
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid #cbd5e1;
+  background: #1e293b;
+}
+
+.crown-glow img {
+  width: 68px;
+  height: 68px;
+  border-color: #facc15;
+  box-shadow: 0 0 20px rgba(250, 204, 21, 0.8);
+}
+
+.step-medal {
+  position: absolute;
+  bottom: -4px;
+  right: -4px;
+  font-size: 16px;
+}
+
+.step-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: #ffffff;
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: 6px;
+}
+
+.step-block {
+  width: 100%;
+  border-radius: 8px 8px 0 0;
+  font-size: 11px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #0f172a;
+}
+
+.step-1 .step-block {
+  height: 120px;
+  background: linear-gradient(180deg, #facc15, #ca8a04);
+}
+
+.step-2 .step-block {
+  height: 90px;
+  background: linear-gradient(180deg, #e2e8f0, #94a3b8);
+}
+
+.step-3 .step-block {
+  height: 65px;
+  background: linear-gradient(180deg, #fdba74, #ea580c);
+  color: #fff;
+}
+
+.podium-countdown {
+  margin-top: 24px;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.podium-countdown b {
+  color: #38bdf8;
+}

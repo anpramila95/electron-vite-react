@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>CÂU CÁ AVATAR 3D — FISHERMAN KING</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Be+Vietnam+Pro:wght@400;600;700;800;900&family=Space+Grotesk:wght@600;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="index.css" />
+  <link rel="stylesheet" href="../../overlay.css" />
+</head>
+<body>
+  <div id="game-canvas-container">
+    <canvas id="three-canvas"></canvas>
+  </div>
+
+  <!-- HUD Overlay -->
+  <div class="hud" id="hud">
+    <!-- Top Bar -->
+    <div class="hud-top">
+      <div class="brand-box">
+        <div class="brand-badge">PRO 3D WATER ENGINE</div>
+        <h1>🎣 CÂU CÁ <em>AVATAR 3D</em></h1>
+        <div class="sub">Tương tác / Tặng quà để tăng điểm VIP — VIP càng cao câu cá càng to khổng lồ 🐋</div>
+      </div>
+      <div class="stats-pills">
+        <div class="pill">
+          <span>BẢN ĐỒ</span>
+          <b id="hud-map-name" style="color: #38bdf8;">🌿 Sông Lam</b>
+        </div>
+        <div class="pill">
+          <span>CẦN THỦ</span>
+          <b id="hud-anglers-count" style="color: #a7f3d0;">0 / 20</b>
+        </div>
+        <div class="pill">
+          <span>TỔNG CÁ CÂU</span>
+          <b id="hud-total-fish" style="color: #fbbf24;">0 Con</b>
+        </div>
+        <button id="btn-sound-toggle" class="pill pill-btn" title="Bật/Tắt âm thanh">
+          <span>ÂM THANH</span>
+          <b id="hud-sound-text">🔊 BẬT</b>
+        </button>
+      </div>
+    </div>
+
+    <!-- Live Leaderboard Sidebar (Bảng Xếp Hạng) -->
+    <div class="leaderboard-sidebar" id="leaderboard-box">
+      <div class="lbl-header">
+        <div class="lbl-title">🏆 BẢNG VÀNG CẦN THỦ</div>
+        <div class="lbl-sub">Sắp xếp theo Trọng lượng & VIP</div>
+      </div>
+      <div class="anglers-list" id="anglers-list">
+        <!-- Rendered dynamically -->
+        <div class="empty-state">Đang chờ cần thủ thả mồi...</div>
+      </div>
+    </div>
+
+    <!-- Huge Catch Banner Notification -->
+    <div class="catch-banner" id="catch-banner">
+      <div class="catch-banner-inner">
+        <span class="banner-icon" id="banner-icon">🐋</span>
+        <div class="banner-body">
+          <div class="banner-title" id="banner-user">VIP MEMBER</div>
+          <div class="banner-desc" id="banner-fish">VỪA KÉO LÊN CÁ VOI THẦN THOẠI — 1,250 KG!</div>
+        </div>
+        <div class="banner-badge" id="banner-tier">THẦN THOẠI</div>
+      </div>
+    </div>
+
+    <!-- Catch Trophy Modal (Thẻ khoe cá ấn tượng) -->
+    <div class="trophy-card" id="trophy-card">
+      <div class="trophy-glow"></div>
+      <div class="trophy-header">
+        <span class="trophy-sparkle">✨ CHIẾN TÍCH MỚI ✨</span>
+        <span class="trophy-rarity" id="trophy-rarity">HUYỀN THOẠI</span>
+      </div>
+      <div class="trophy-user-row">
+        <img id="trophy-avatar" src="" alt="Avatar" />
+        <div class="trophy-user-info">
+          <div class="trophy-username" id="trophy-username">---</div>
+          <div class="trophy-vip-tag" id="trophy-vip-tag">⭐ VIP</div>
+        </div>
+      </div>
+      <div class="trophy-fish-showcase">
+        <div class="trophy-fish-emoji" id="trophy-fish-emoji">🐟</div>
+        <div class="trophy-fish-name" id="trophy-fish-name">Cá Chép Vàng</div>
+        <div class="trophy-fish-weight" id="trophy-fish-weight">0.0 <span>KG</span></div>
+      </div>
+    </div>
+
+    <!-- Camera Switcher Bar -->
+    <div class="camera-bar" id="camera-bar">
+      <button class="cam-btn active" data-cam="overview">🏞️ Toàn Cảnh</button>
+      <button class="cam-btn" data-cam="top1">👑 Bám Top 1</button>
+      <button class="cam-btn" data-cam="water">🌊 Góc Mặt Nước</button>
+      <button class="cam-btn" data-cam="fly">🚁 Flycam Trên Cao</button>
+      <button class="cam-btn cam-close-btn" id="btn-hide-cam" title="Ẩn thanh camera">✕</button>
+    </div>
+    <button class="cam-restore-btn" id="btn-show-cam" title="Hiện thanh camera" style="display: none;">🎥</button>
+  </div>
+
+  <!-- Three.js CDN -->
+  <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+  <script src="../../overlay.js"></script>
+  <script src="index.js"></script>
+</body>
+</html>

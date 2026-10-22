@@ -1,0 +1,160 @@
+{
+  "id": "racing_3d",
+  "name": "Đua Xe Avatar 3D (Grand Prix)",
+  "description": "Trường đua xe 3D tương tác. Xe mô hình gắn avatar khán giả, phụt lửa Nitro khi tặng quà, camera đuổi bám theo xe top 1.",
+  "icon": "🏎️",
+  "badge": "Three.js 3D",
+  "features": [
+    "Đồ họa Three.js 3D siêu mượt",
+    "Xe gắn avatar thật của khán giả",
+    "Phụt lửa Nitro khi tặng quà",
+    "Đổi 4 góc camera linh hoạt",
+    "Bục vinh danh Top 1-2-3"
+  ],
+  "settingsSchema": [
+    {
+      "key": "laps",
+      "label": "Số vòng đua mỗi chặng",
+      "type": "buttons",
+      "defaultValue": 3,
+      "options": [
+        { "label": "2 Vòng", "value": 2 },
+        { "label": "3 Vòng", "value": 3 },
+        { "label": "5 Vòng", "value": 5 }
+      ]
+    },
+    {
+      "key": "racersPerHeat",
+      "label": "Số xe tối đa tham gia đua (Top tuyển chọn)",
+      "type": "buttons",
+      "defaultValue": 30,
+      "options": [
+        { "label": "10 Xe", "value": 10 },
+        { "label": "20 Xe", "value": 20 },
+        { "label": "30 Xe", "value": 30 },
+        { "label": "40 Xe", "value": 40 }
+      ]
+    },
+    {
+      "key": "speed",
+      "label": "Tốc độ cơ bản",
+      "type": "range",
+      "defaultValue": 1.8,
+      "min": 0.8,
+      "max": 3.5,
+      "step": 0.2,
+      "unit": "×"
+    },
+    {
+      "key": "trackTheme",
+      "label": "Bản đồ & Môi trường đường đua",
+      "type": "select",
+      "defaultValue": "galaxy",
+      "options": [
+        { "label": "🌌 Không Gian & Thiên Hà Vũ Trụ (Galaxy Cosmic)", "value": "galaxy" },
+        { "label": "🪐 Sao Hỏa Đỏ & Trạm Không Gian (Mars Red Planet)", "value": "mars" },
+        { "label": "🏙️ Thành Phố Cyberpunk Neon 2077", "value": "neon" },
+        { "label": "🏜️ Hẻm Núi Sa Mạc (Grand Canyon)", "value": "desert" },
+        { "label": "🏁 Đường Đua F1 Grand Prix Ban Đêm", "value": "circuit" },
+        { "label": "❄️ Vùng Băng Bắc Cực (Arctic Frost)", "value": "arctic" }
+      ]
+    },
+    {
+      "key": "weather",
+      "label": "Hiệu ứng thời tiết & Môi trường",
+      "type": "select",
+      "defaultValue": "none",
+      "options": [
+        { "label": "Trời quang (Mặc định)", "value": "none" },
+        { "label": "🌧️ Mưa rào & Sấm chớp", "value": "rain" },
+        { "label": "❄️ Bão tuyết rơi", "value": "snow" },
+        { "label": "🌪️ Bão cát & Bụi sa mạc", "value": "sandstorm" },
+        { "label": "✨ Bão sao băng phát sáng", "value": "stars" }
+      ]
+    },
+    {
+      "key": "enableAudio",
+      "label": "Âm thanh đường đua & Động cơ (Audio SFX)",
+      "type": "boolean",
+      "defaultValue": true
+    },
+    {
+      "key": "showCameraBar",
+      "label": "Hiển thị thanh chuyển góc camera trên màn hình",
+      "type": "boolean",
+      "defaultValue": true
+    },
+    {
+      "key": "showComments",
+      "label": "Hiển thị bình luận trên màn hình (Live Chat)",
+      "type": "boolean",
+      "defaultValue": true
+    },
+    {
+      "key": "showTopUsers",
+      "label": "Hiển thị Top tương tác (Top người dùng)",
+      "type": "boolean",
+      "defaultValue": false
+    },
+    {
+      "key": "showGifts",
+      "label": "Hiển thị quà tặng trên màn hình (Gifts)",
+      "type": "boolean",
+      "defaultValue": true
+    }
+  ],
+  "actions": [
+    {
+      "id": "start_race",
+      "label": "BẮT ĐẦU ĐUA NGAY",
+      "icon": "🏁",
+      "variant": "accent",
+      "actionKey": "start_race",
+      "group": "main_trigger"
+    },
+    {
+      "id": "nitro_all",
+      "label": "Bật Nitro toàn đoàn xe",
+      "icon": "⚡",
+      "variant": "warning",
+      "actionKey": "nitro_all",
+      "group": "race_flow"
+    },
+    {
+      "id": "reset_race",
+      "label": "Xếp lại đoàn xe từ đầu",
+      "icon": "🔄",
+      "variant": "secondary",
+      "actionKey": "reset_race",
+      "group": "race_flow"
+    },
+    {
+      "id": "cam_chase",
+      "label": "Bám Top 1",
+      "actionKey": "change_camera",
+      "payload": "chase",
+      "group": "camera_views"
+    },
+    {
+      "id": "cam_fly",
+      "label": "Toàn cảnh",
+      "actionKey": "change_camera",
+      "payload": "fly",
+      "group": "camera_views"
+    },
+    {
+      "id": "cam_side",
+      "label": "Góc bên",
+      "actionKey": "change_camera",
+      "payload": "side",
+      "group": "camera_views"
+    },
+    {
+      "id": "cam_cockpit",
+      "label": "Buồng lái",
+      "actionKey": "change_camera",
+      "payload": "cockpit",
+      "group": "camera_views"
+    }
+  ]
+}

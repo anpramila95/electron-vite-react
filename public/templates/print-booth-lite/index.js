@@ -1799,35 +1799,9 @@ function makeRealPhotoCard(cx, cy, R, person, theme, opt) {
   const nameDy = typeof opt.nameDy === "number" ? opt.nameDy : 1.32 * R;
   const nameSize = opt.nameSize || R * 0.24;
 
-  // Neu khong co nguoi trong hang cho -> ve o cho
+  // Hết người trong hàng chờ -> không vẽ ô trống "CHỜ KHÁN GIẢ"
   if (!person) {
-    S.push({
-      pts: roundRectPts(
-        cx - cardW / 2,
-        cy - cardH / 2,
-        cardW,
-        cardH,
-        Math.min(cardW, cardH) * 0.06,
-      ),
-      color: "rgba(120,90,60,.18)",
-      w: 2.5,
-      fill: "rgba(255,255,255,0.45)",
-      strokeIt: true,
-    });
-    S.push({
-      pts: arcPts(cx, cy, R * 0.85, R * 0.85, 0, Math.PI * 2, 48),
-      color: "rgba(140,110,80,.25)",
-      w: 2.5,
-    });
-    S.push({
-      pts: [[cx, cy + nameDy]],
-      color: "rgba(140,110,80,.5)",
-      w: 2,
-      text: "· CHỜ KHÁN GIẢ ·",
-      size: nameSize * 0.85,
-      cost: 20,
-    });
-    return S;
+    return [];
   }
 
   const rawName = person.name || "Khán giả";
@@ -1975,6 +1949,12 @@ function buildBatch(sheet, batch) {
     const cx = CW / 2,
       cy = CH * 0.53;
     const person = popFromQueue(true);
+    if (!person) {
+      sheet.strokes = [];
+      sheet.finished = true;
+      sheet.dirty = true;
+      return;
+    }
     const st = makeRealPhotoCard(cx, cy, R, person, theme, {
       cardW: CW * 0.94,
       cardH: CH * 0.91,
@@ -2014,10 +1994,17 @@ function buildBatch(sheet, batch) {
     const R = Math.min(cw * 0.28, ch * 0.28);
     const cardW = cw * 0.93;
     const cardH = ch * 0.91;
+    let printedInThisSheet = 0;
+
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const i = r * cols + c;
         const person = popFromQueue(false);
+        if (!person) {
+          // Hết người trong hàng chờ -> dừng mẻ ngay tại đây, không in ô chờ khán giả
+          break;
+        }
+        printedInThisSheet++;
         const cx = cw * (c + 0.5),
           cy = ch * (r + 0.42);
         const st = makeRealPhotoCard(cx, cy, R, person, theme, {
@@ -2043,7 +2030,19 @@ function buildBatch(sheet, batch) {
         st[st.length - 1].lastOfSlot = true;
         sheet.strokes.push.apply(sheet.strokes, st);
       }
+      if (userQueue.length === 0) {
+        break;
+      }
     }
+
+    // Nếu hàng chờ hoàn toàn rỗng -> kết thúc mẻ và dừng máy in tại chỗ
+    if (printedInThisSheet === 0) {
+      sheet.strokes = [];
+      sheet.finished = true;
+      sheet.dirty = true;
+      return;
+    }
+
     sheet.strokes.push({
       pts: [[CW / 2, 42]],
       color: theme.ring,
@@ -2226,7 +2225,6 @@ function finalize(sheet, s) {
     if (finalImg && finalImg.complete && finalImg.naturalWidth > 0) {
       drawSlotPhoto(finalImg);
     }
-  }
   }
   if (s.restore && sheet.clipDepth > 0) {
     g.restore();
@@ -3312,9 +3310,9 @@ function addUserToQueue(isVip, userObj) {
 
   // Neu may in dang o trang thai cho hoac da in xong me cu -> in ngay
   if (!flow.active && active) {
-    if (active.finished) {
+    if (active.finished && active.strokes.length > 0) {
       startFlow();
-    } else if (active.strokes.length === 0 || active.strokes.every(function (s) { return !s.photoSlice; })) {
+    } else if (active.strokes.length === 0) {
       buildBatch(active, state.batch);
     }
   }

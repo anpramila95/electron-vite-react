@@ -683,6 +683,84 @@ function getOrLoadPhoto(url, onReady) {
   return img;
 }
 
+// Bộ lọc Siêu Phân Giải & Làm Nét Thích Ứng (Multi-step Bicubic Upscaling + Unsharp Masking)
+function getEnhancedPhotoCanvas(img, targetDim) {
+  if (!img || !img.complete || img.naturalWidth === 0) return null;
+  const target = Math.max(256, Math.min(800, Math.round(targetDim || 512)));
+
+  // Tái sử dụng canvas đã xử lý siêu nét nếu có
+  if (img._enhancedCanvas && img._enhancedDim >= target * 0.85) {
+    return img._enhancedCanvas;
+  }
+
+  const nw = img.naturalWidth;
+  const nh = img.naturalHeight;
+  const minDim = Math.min(nw, nh);
+  const cropX = (nw - minDim) / 2;
+  const cropY = (nh - minDim) / 2;
+
+  // 1. Cắt vuông ảnh gốc
+  let cur = document.createElement("canvas");
+  cur.width = minDim;
+  cur.height = minDim;
+  let ctx = cur.getContext("2d", { willReadFrequently: true });
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(img, cropX, cropY, minDim, minDim, 0, 0, minDim, minDim);
+
+  // 2. Phóng to đa nấc từng bước nhân đôi (tránh nhòe do phóng 1 lần từ 72px lên 600px)
+  let curSize = minDim;
+  while (curSize < target) {
+    const nextSize = Math.min(target, curSize * 2);
+    const next = document.createElement("canvas");
+    next.width = nextSize;
+    next.height = nextSize;
+    const nctx = next.getContext("2d", { willReadFrequently: true });
+    nctx.imageSmoothingEnabled = true;
+    nctx.imageSmoothingQuality = "high";
+    nctx.drawImage(cur, 0, 0, curSize, curSize, 0, 0, nextSize, nextSize);
+    cur = next;
+    ctx = nctx;
+    curSize = nextSize;
+  }
+
+  // 3. Unsharp Masking (Tăng độ tương phản & độ sắc nét viền khuôn mặt, mắt, tóc)
+  try {
+    const imgData = ctx.getImageData(0, 0, target, target);
+    const d = imgData.data;
+    const copy = new Uint8ClampedArray(d);
+    const amount = 0.5; // Hệ số làm nét chuẩn mắt
+
+    for (let y = 1; y < target - 1; y++) {
+      const row = y * target;
+      const rowUp = (y - 1) * target;
+      const rowDown = (y + 1) * target;
+
+      for (let x = 1; x < target - 1; x++) {
+        const idx = (row + x) * 4;
+        for (let c = 0; c < 3; c++) {
+          const center = copy[idx + c];
+          const edge =
+            (copy[(rowUp + x) * 4 + c] +
+              copy[(rowDown + x) * 4 + c] +
+              copy[(row + x - 1) * 4 + c] +
+              copy[(row + x + 1) * 4 + c]) *
+            0.25;
+          const sharp = center + (center - edge) * amount;
+          d[idx + c] = sharp < 0 ? 0 : sharp > 255 ? 255 : sharp;
+        }
+      }
+    }
+    ctx.putImageData(imgData, 0, 0);
+  } catch (err) {
+    // Fallback nếu canvas bị tainted
+  }
+
+  img._enhancedCanvas = cur;
+  img._enhancedDim = target;
+  return cur;
+}
+
 REAL_PHOTOS.forEach(function (url) {
   const img = new Image();
   img.crossOrigin = "anonymous";
@@ -1791,6 +1869,125 @@ function showVipNotice() {
   // Tat popup "Da dong dau VIP" theo yeu cau
 }
 
+// Vòng Nguyệt Quế Hoàng Gia bao quanh avatar VIP
+function makeLaurelWreath(cx, cy, R, color) {
+  const S = [];
+  const wreathR = R * 1.15;
+  const leafCount = 9;
+  const gold = color || "#fbbf24";
+  const darkGold = "#d97706";
+
+  [-1, 1].forEach(function (side) {
+    const startAng = Math.PI * 0.42;
+    const endAng = -Math.PI * 0.38;
+    const steps = 24;
+    const branchPts = [];
+
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const ang = startAng + (endAng - startAng) * t;
+      const r = wreathR + Math.sin(t * Math.PI) * (R * 0.06);
+      branchPts.push([cx + side * Math.cos(ang) * r, cy + Math.sin(ang) * r]);
+    }
+
+    S.push({
+      pts: branchPts,
+      color: darkGold,
+      w: 3.5,
+      cost: 25,
+    });
+
+    for (let k = 1; k < leafCount; k++) {
+      const t = k / leafCount;
+      const ang = startAng + (endAng - startAng) * t;
+      const rStem = wreathR + Math.sin(t * Math.PI) * (R * 0.06);
+      const stemX = cx + side * Math.cos(ang) * rStem;
+      const stemY = cy + Math.sin(ang) * rStem;
+
+      const normX = side * Math.cos(ang);
+      const normY = Math.sin(ang);
+      const tanX = -normY * (side > 0 ? -1 : 1);
+      const tanY = normX * (side > 0 ? -1 : 1);
+
+      const leafLen = R * 0.22;
+      const tipX = stemX + normX * leafLen * 0.7 + tanX * leafLen * 0.75;
+      const tipY = stemY + normY * leafLen * 0.7 + tanY * leafLen * 0.75;
+
+      const midX = (stemX + tipX) * 0.5 - tanY * (R * 0.06);
+      const midY = (stemY + tipY) * 0.5 + tanX * (R * 0.06);
+
+      S.push({
+        pts: [
+          [stemX, stemY],
+          [midX, midY],
+          [tipX, tipY],
+          [stemX, stemY],
+        ],
+        fill: "rgba(251, 191, 36, 0.45)",
+        color: gold,
+        w: 2.2,
+        strokeIt: true,
+        cost: 18,
+      });
+
+      if (k % 2 === 1) {
+        const inTipX = stemX - normX * leafLen * 0.25 + tanX * leafLen * 0.6;
+        const inTipY = stemY - normY * leafLen * 0.25 + tanY * leafLen * 0.6;
+        S.push({
+          pts: [
+            [stemX, stemY],
+            [inTipX, inTipY],
+          ],
+          color: gold,
+          w: 2,
+          cost: 12,
+        });
+      }
+    }
+  });
+
+  // Vương miện hoàng gia trên đỉnh avatar VIP
+  const topY = cy - wreathR * 0.95;
+  S.push({
+    pts: [
+      [cx - R * 0.22, topY],
+      [cx - R * 0.26, topY - R * 0.16],
+      [cx - R * 0.11, topY - R * 0.08],
+      [cx, topY - R * 0.2],
+      [cx + R * 0.11, topY - R * 0.08],
+      [cx + R * 0.26, topY - R * 0.16],
+      [cx + R * 0.22, topY],
+      [cx - R * 0.22, topY],
+    ],
+    fill: "rgba(251, 191, 36, 0.85)",
+    color: "#d97706",
+    w: 2.8,
+    strokeIt: true,
+    cost: 35,
+  });
+
+  // Nơ ruy băng đỏ ở đáy vòng nguyệt quế
+  const botY = cy + wreathR * 0.96;
+  S.push({
+    pts: [
+      [cx, botY],
+      [cx - R * 0.14, botY + R * 0.1],
+      [cx - R * 0.09, botY + R * 0.18],
+      [cx, botY + R * 0.06],
+      [cx + R * 0.09, botY + R * 0.18],
+      [cx + R * 0.14, botY + R * 0.1],
+      [cx, botY],
+    ],
+    fill: "#dc2626",
+    color: gold,
+    w: 2.4,
+    strokeIt: true,
+    cost: 25,
+  });
+
+  return S;
+}
+
 function makeRealPhotoCard(cx, cy, R, person, theme, opt) {
   opt = opt || {};
   const S = [];
@@ -1799,35 +1996,9 @@ function makeRealPhotoCard(cx, cy, R, person, theme, opt) {
   const nameDy = typeof opt.nameDy === "number" ? opt.nameDy : 1.32 * R;
   const nameSize = opt.nameSize || R * 0.24;
 
-  // Neu khong co nguoi trong hang cho -> ve o cho
+  // Hết người trong hàng chờ -> không vẽ ô trống "CHỜ KHÁN GIẢ"
   if (!person) {
-    S.push({
-      pts: roundRectPts(
-        cx - cardW / 2,
-        cy - cardH / 2,
-        cardW,
-        cardH,
-        Math.min(cardW, cardH) * 0.06,
-      ),
-      color: "rgba(120,90,60,.18)",
-      w: 2.5,
-      fill: "rgba(255,255,255,0.45)",
-      strokeIt: true,
-    });
-    S.push({
-      pts: arcPts(cx, cy, R * 0.85, R * 0.85, 0, Math.PI * 2, 48),
-      color: "rgba(140,110,80,.25)",
-      w: 2.5,
-    });
-    S.push({
-      pts: [[cx, cy + nameDy]],
-      color: "rgba(140,110,80,.5)",
-      w: 2,
-      text: "· CHỜ KHÁN GIẢ ·",
-      size: nameSize * 0.85,
-      cost: 20,
-    });
-    return S;
+    return [];
   }
 
   const rawName = person.name || "Khán giả";
@@ -1888,6 +2059,12 @@ function makeRealPhotoCard(cx, cy, R, person, theme, opt) {
     color: theme.ring,
     w: 7.5,
   });
+
+  // 4b. Vòng nguyệt quế hoàng gia dành riêng cho VIP
+  if (person && person.isVip) {
+    const wreathStrokes = makeLaurelWreath(cx, cy, R, "#fbbf24");
+    S.push.apply(S, wreathStrokes);
+  }
 
   // 5. CHAY DEN DAU RA HINH DEN DO voi anh thật
   if (photoUrl) {
@@ -1975,6 +2152,12 @@ function buildBatch(sheet, batch) {
     const cx = CW / 2,
       cy = CH * 0.53;
     const person = popFromQueue(true);
+    if (!person) {
+      sheet.strokes = [];
+      sheet.finished = true;
+      sheet.dirty = true;
+      return;
+    }
     const st = makeRealPhotoCard(cx, cy, R, person, theme, {
       cardW: CW * 0.94,
       cardH: CH * 0.91,
@@ -2014,10 +2197,17 @@ function buildBatch(sheet, batch) {
     const R = Math.min(cw * 0.28, ch * 0.28);
     const cardW = cw * 0.93;
     const cardH = ch * 0.91;
+    let printedInThisSheet = 0;
+
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const i = r * cols + c;
         const person = popFromQueue(false);
+        if (!person) {
+          // Hết người trong hàng chờ -> dừng mẻ ngay tại đây, không in ô chờ khán giả
+          break;
+        }
+        printedInThisSheet++;
         const cx = cw * (c + 0.5),
           cy = ch * (r + 0.42);
         const st = makeRealPhotoCard(cx, cy, R, person, theme, {
@@ -2043,7 +2233,19 @@ function buildBatch(sheet, batch) {
         st[st.length - 1].lastOfSlot = true;
         sheet.strokes.push.apply(sheet.strokes, st);
       }
+      if (userQueue.length === 0) {
+        break;
+      }
     }
+
+    // Nếu hàng chờ hoàn toàn rỗng -> kết thúc mẻ và dừng máy in tại chỗ
+    if (printedInThisSheet === 0) {
+      sheet.strokes = [];
+      sheet.finished = true;
+      sheet.dirty = true;
+      return;
+    }
+
     sheet.strokes.push({
       pts: [[CW / 2, 42]],
       color: theme.ring,
@@ -2158,13 +2360,16 @@ function finalize(sheet, s) {
     const g = sheet.ctx;
     const img = getOrLoadPhoto(s.photoUrl);
     if (img && img.complete && img.naturalWidth > 0) {
+      const photoSrc = getEnhancedPhotoCanvas(img, s.r * 2) || img;
       g.save();
+      g.imageSmoothingEnabled = true;
+      g.imageSmoothingQuality = "high";
       g.beginPath();
       g.arc(s.cx, s.cy, s.r, 0, Math.PI * 2);
       g.clip();
 
-      const nw = img.naturalWidth;
-      const nh = img.naturalHeight;
+      const nw = photoSrc.width || photoSrc.naturalWidth;
+      const nh = photoSrc.height || photoSrc.naturalHeight;
       const sx = Math.max(0, (s.normSx !== undefined ? s.normSx : (s.srcX / 256)) * nw);
       const sy = Math.max(0, (s.normSy !== undefined ? s.normSy : (s.srcY / 256)) * nh);
       const sw = Math.min(nw - sx, (s.normSw !== undefined ? s.normSw : (s.destW / (2 * s.r))) * nw);
@@ -2172,7 +2377,7 @@ function finalize(sheet, s) {
 
       if (sw > 0 && sh > 0) {
         g.drawImage(
-          img,
+          photoSrc,
           sx,
           sy,
           sw,
@@ -2188,7 +2393,7 @@ function finalize(sheet, s) {
         const cropX = (nw - minDim) / 2;
         const cropY = (nh - minDim) / 2;
         g.drawImage(
-          img,
+          photoSrc,
           cropX,
           cropY,
           minDim,
@@ -2207,17 +2412,20 @@ function finalize(sheet, s) {
   if (s.lastOfSlot && s.photoUrl) {
     const drawSlotPhoto = function (imgObj) {
       if (!imgObj || !imgObj.complete || imgObj.naturalWidth === 0 || s.cx === undefined) return;
+      const photoSrc = getEnhancedPhotoCanvas(imgObj, s.r * 2) || imgObj;
       const g = sheet.ctx;
       g.save();
+      g.imageSmoothingEnabled = true;
+      g.imageSmoothingQuality = "high";
       g.beginPath();
       g.arc(s.cx, s.cy, s.r * 0.98, 0, Math.PI * 2);
       g.clip();
-      const nw = imgObj.naturalWidth;
-      const nh = imgObj.naturalHeight;
+      const nw = photoSrc.width || photoSrc.naturalWidth;
+      const nh = photoSrc.height || photoSrc.naturalHeight;
       const minDim = Math.min(nw, nh);
       const cropX = (nw - minDim) / 2;
       const cropY = (nh - minDim) / 2;
-      g.drawImage(imgObj, cropX, cropY, minDim, minDim, s.cx - s.r, s.cy - s.r, s.r * 2, s.r * 2);
+      g.drawImage(photoSrc, cropX, cropY, minDim, minDim, s.cx - s.r, s.cy - s.r, s.r * 2, s.r * 2);
       g.restore();
       sheet.dirty = true;
     };
@@ -2226,7 +2434,6 @@ function finalize(sheet, s) {
     if (finalImg && finalImg.complete && finalImg.naturalWidth > 0) {
       drawSlotPhoto(finalImg);
     }
-  }
   }
   if (s.restore && sheet.clipDepth > 0) {
     g.restore();
@@ -3312,9 +3519,9 @@ function addUserToQueue(isVip, userObj) {
 
   // Neu may in dang o trang thai cho hoac da in xong me cu -> in ngay
   if (!flow.active && active) {
-    if (active.finished) {
+    if (active.finished && active.strokes.length > 0) {
       startFlow();
-    } else if (active.strokes.length === 0 || active.strokes.every(function (s) { return !s.photoSlice; })) {
+    } else if (active.strokes.length === 0) {
       buildBatch(active, state.batch);
     }
   }
@@ -3592,6 +3799,10 @@ setTimeout(function () {
 
   function handleSocketMessage(msg) {
     if (!msg || !msg.type) return;
+
+    if (window.LiveOverlay && typeof window.LiveOverlay.handleMessage === "function") {
+      window.LiveOverlay.handleMessage(msg);
+    }
 
     if (msg.type === "INIT_STATE") {
       if (msg.settings) applyRemoteSettings(msg.settings);

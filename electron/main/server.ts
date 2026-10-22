@@ -2,6 +2,7 @@ import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
 import { WebSocketServer, WebSocket } from 'ws'
+import { db } from './db'
 
 export interface ServerInstance {
   server: http.Server
@@ -214,6 +215,216 @@ export function startLocalServer(publicDir: string, defaultPort = 3210): Promise
         } catch (err: any) {
           res.writeHead(500, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' })
           res.end(err.message || 'Error streaming audio')
+        }
+        return
+      }
+
+      // Proxy online audio stream to bypass CORS and hotlink restrictions
+      if (pathname === '/api/audio-proxy') {
+        const targetUrl = reqUrl.searchParams.get('url')
+        if (!targetUrl) {
+          res.writeHead(400, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' })
+          res.end('Missing url parameter')
+          return
+        }
+
+        try {
+          const upstream = await fetch(targetUrl, {
+            headers: {
+              'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+              'Range': req.headers.range || 'bytes=0-',
+              'Accept': '*/*',
+            },
+          })
+
+          const contentType = upstream.headers.get('content-type') || 'audio/mpeg'
+          const contentLength = upstream.headers.get('content-length')
+          const contentRange = upstream.headers.get('content-range')
+
+          const headers: Record<string, any> = {
+            'Content-Type': contentType,
+            'Access-Control-Allow-Origin': '*',
+            'Accept-Ranges': 'bytes',
+          }
+          if (contentLength) headers['Content-Length'] = contentLength
+          if (contentRange) headers['Content-Range'] = contentRange
+
+          res.writeHead(upstream.status === 206 ? 206 : 200, headers)
+          const arrayBuffer = await upstream.arrayBuffer()
+          res.end(Buffer.from(arrayBuffer))
+        } catch (err: any) {
+          res.writeHead(500, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' })
+          res.end(err.message || 'Error streaming remote audio')
+        }
+        return
+      }
+
+      // Endpoint /api/tts: Proxy TTS audio (Google, OpenAI, ElevenLabs, Custom Remote)
+      if (pathname === '/api/tts') {
+        const text = (reqUrl.searchParams.get('text') || '').trim()
+        const lang = reqUrl.searchParams.get('lang') || 'vi'
+        if (!text) {
+          res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
+          res.end(JSON.stringify({ error: 'Missing text parameter' }))
+          return
+        }
+
+        let aiCfg: any = {}
+        try {
+          const rawCfg = db.getConfig('ai_engine_config')
+          if (rawCfg) aiCfg = JSON.parse(rawCfg)
+        } catch (_) {}
+
+        const engine = aiCfg.ttsEngine || 'google'
+
+        // 1. OpenAI Audio Speech API
+        if (engine === 'openai' && aiCfg.ttsApiKey) {
+          try {
+            const openAiBase = (aiCfg.ttsBaseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '')
+            const resp = await fetch(`${openAiBase}/audio/speech`, {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${aiCfg.ttsApiKey.trim()}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                model: aiCfg.ttsModel || 'tts-1',
+                input: text,
+                voice: aiCfg.ttsVoice || 'nova',
+                speed: aiCfg.ttsSpeed || 1.0,
+              }),
+              signal: AbortSignal.timeout(10000),
+            })
+            if (resp.ok) {
+              const arrayBuf = await resp.arrayBuffer()
+              res.writeHead(200, {
+                'Content-Type': resp.headers.get('content-type') || 'audio/mpeg',
+                'Content-Length': arrayBuf.byteLength,
+                'Cache-Control': 'public, max-age=7200',
+                'Access-Control-Allow-Origin': '*',
+              })
+              res.end(Buffer.from(arrayBuf))
+              return
+            }
+          } catch (err: any) {
+            console.warn('[TTS Server] OpenAI TTS failed, falling back to Google:', err.message)
+          }
+        }
+
+        // 2. ElevenLabs Text-to-Speech API
+        if (engine === 'elevenlabs' && aiCfg.ttsApiKey) {
+          try {
+            const voiceId = aiCfg.ttsVoice || '21m00Tcm4TlvDq8ikWAM' // Default Rachel / Multilingual
+            const resp = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}`, {
+              method: 'POST',
+              headers: {
+                'xi-api-key': aiCfg.ttsApiKey.trim(),
+                'Content-Type': 'application/json',
+                'Accept': 'audio/mpeg',
+              },
+              body: JSON.stringify({
+                text,
+                model_id: aiCfg.ttsModel || 'eleven_multilingual_v2',
+                voice_settings: {
+                  stability: 0.5,
+                  similarity_boost: 0.75,
+                },
+              }),
+              signal: AbortSignal.timeout(12000),
+            })
+            if (resp.ok) {
+              const arrayBuf = await resp.arrayBuffer()
+              res.writeHead(200, {
+                'Content-Type': 'audio/mpeg',
+                'Content-Length': arrayBuf.byteLength,
+                'Cache-Control': 'public, max-age=7200',
+                'Access-Control-Allow-Origin': '*',
+              })
+              res.end(Buffer.from(arrayBuf))
+              return
+            }
+          } catch (err: any) {
+            console.warn('[TTS Server] ElevenLabs TTS failed, falling back to Google:', err.message)
+          }
+        }
+
+        // 3. Custom Remote TTS API (User specified URL)
+        if (engine === 'custom_remote' && aiCfg.ttsBaseUrl) {
+          try {
+            const method = (aiCfg.ttsCustomMethod || 'POST').toUpperCase()
+            const headers: Record<string, string> = {}
+            if (aiCfg.ttsApiKey) {
+              headers['Authorization'] = `Bearer ${aiCfg.ttsApiKey.trim()}`
+            }
+
+            let remoteResp: Response
+            if (method === 'GET') {
+              const url = new URL(aiCfg.ttsBaseUrl)
+              url.searchParams.set('text', text)
+              if (aiCfg.ttsVoice) url.searchParams.set('voice', aiCfg.ttsVoice)
+              if (aiCfg.ttsSpeed) url.searchParams.set('speed', String(aiCfg.ttsSpeed))
+              remoteResp = await fetch(url.toString(), { headers, signal: AbortSignal.timeout(10000) })
+            } else {
+              headers['Content-Type'] = 'application/json'
+              remoteResp = await fetch(aiCfg.ttsBaseUrl, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({
+                  text,
+                  voice: aiCfg.ttsVoice || 'vi-VN',
+                  speed: aiCfg.ttsSpeed || 1.0,
+                  model: aiCfg.ttsModel,
+                }),
+                signal: AbortSignal.timeout(10000),
+              })
+            }
+
+            if (remoteResp.ok) {
+              const arrayBuf = await remoteResp.arrayBuffer()
+              res.writeHead(200, {
+                'Content-Type': remoteResp.headers.get('content-type') || 'audio/mpeg',
+                'Content-Length': arrayBuf.byteLength,
+                'Cache-Control': 'public, max-age=7200',
+                'Access-Control-Allow-Origin': '*',
+              })
+              res.end(Buffer.from(arrayBuf))
+              return
+            }
+          } catch (err: any) {
+            console.warn('[TTS Server] Custom remote TTS failed, falling back to Google:', err.message)
+          }
+        }
+
+        // 4. Default / Fallback: Google Translate TTS mp3
+        try {
+          const googleUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=${encodeURIComponent(lang)}&client=tw-ob&q=${encodeURIComponent(text.slice(0, 200))}`
+          const upstream = await fetch(googleUrl, {
+            headers: {
+              'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+              'Accept': '*/*',
+              'Referer': 'https://translate.google.com/',
+            },
+            signal: AbortSignal.timeout(8000),
+          })
+
+          if (!upstream.ok) {
+            throw new Error(`Google TTS upstream status ${upstream.status}`)
+          }
+
+          const arrayBuffer = await upstream.arrayBuffer()
+          const buffer = Buffer.from(arrayBuffer)
+          res.writeHead(200, {
+            'Content-Type': 'audio/mpeg',
+            'Content-Length': buffer.length,
+            'Cache-Control': 'public, max-age=7200',
+            'Access-Control-Allow-Origin': '*',
+          })
+          res.end(buffer)
+        } catch (err: any) {
+          res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
+          res.end(JSON.stringify({ error: err.message || 'Failed to fetch TTS audio' }))
         }
         return
       }
