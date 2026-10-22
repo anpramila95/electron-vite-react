@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>VÒNG QUAY MAY MẮN TIKTOK LIVE</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Space+Grotesk:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="index.css" />
+</head>
+<body>
+  <div class="header">
+    <h1 id="title">VÒNG QUAY MAY MẮN</h1>
+    <p id="sub">Khán giả bình luận / tặng quà trên TikTok Live để nạp vào vòng quay!</p>
+  </div>
+
+  <div class="wheel-container">
+    <div class="pointer"></div>
+    <canvas id="wheel" width="600" height="600"></canvas>
+    <div class="center-btn" id="btn-spin">QUAY</div>
+  </div>
+
+  <div class="winner-toast" id="winner-toast">🎉 CHÚC MỪNG: <span id="winner-name">---</span> TRÚNG THƯỞNG!</div>
+  <div class="queue-bar">Số người trong vòng quay: <strong id="count" style="color: #38bdf8;">0</strong></div>
+
+  <script src="index.js"></script>
+</body>
+</html>

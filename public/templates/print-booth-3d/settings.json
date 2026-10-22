@@ -1,0 +1,134 @@
+{
+  "id": "print_booth_3d",
+  "name": "Máy In Avatar 3D",
+  "description": "Máy in 3D mô phỏng vẽ chân dung avatar khán giả theo phong cách cơ khí chân thực với Three.js.",
+  "icon": "🖨️",
+  "badge": "Mặc định",
+  "features": [
+    "Three.js 3D",
+    "Vẽ lát cắt avatar thật",
+    "Khung thẻ VIP",
+    "Đổi 5 góc camera",
+    "5 Chủ đề màu"
+  ],
+  "settingsSchema": [
+    {
+      "key": "speed",
+      "label": "Tốc độ in",
+      "type": "range",
+      "defaultValue": 1.6,
+      "min": 0.5,
+      "max": 4.0,
+      "step": 0.1,
+      "unit": "×"
+    },
+    {
+      "key": "cardsPerSheet",
+      "label": "Số ảnh mỗi mẻ in",
+      "type": "buttons",
+      "defaultValue": 6,
+      "options": [
+        { "label": "4 Ảnh", "value": 4 },
+        { "label": "6 Ảnh", "value": 6 },
+        { "label": "8 Ảnh", "value": 8 }
+      ]
+    },
+    {
+      "key": "theme",
+      "label": "Chủ đề màu sắc",
+      "type": "buttons",
+      "defaultValue": 0,
+      "options": [
+        { "label": "Mặc định (Nhẹ)", "value": 0, "color": "#3b82f6" },
+        { "label": "Tết VN", "value": 1, "color": "#e2412c" },
+        { "label": "Giáng Sinh", "value": 2, "color": "#d8443c" },
+        { "label": "Đêm Tiệc", "value": 3, "color": "#b06bff" },
+        { "label": "Đèn Sáng", "value": 4, "color": "#0284c7" },
+        { "label": "Nắng Vàng", "value": 5, "color": "#d97706" }
+      ]
+    },
+    {
+      "key": "rare",
+      "label": "Chế độ ảnh lớn VIP khi có quà lớn",
+      "type": "boolean",
+      "defaultValue": true
+    }
+  ],
+  "actions": [
+    {
+      "id": "toggle-play",
+      "label": "Tạm dừng / Tiếp tục",
+      "icon": "⏯️",
+      "variant": "primary",
+      "actionKey": "toggle-play",
+      "group": "printer_flow"
+    },
+    {
+      "id": "turbo",
+      "label": "Turbo ×3",
+      "icon": "⚡",
+      "variant": "warning",
+      "actionKey": "turbo",
+      "group": "printer_flow"
+    },
+    {
+      "id": "rotate",
+      "label": "Tự xoay 3D",
+      "icon": "🔄",
+      "variant": "secondary",
+      "actionKey": "rotate",
+      "group": "printer_flow"
+    },
+    {
+      "id": "reset",
+      "label": "In lại từ đầu",
+      "icon": "🔁",
+      "variant": "secondary",
+      "actionKey": "reset",
+      "group": "printer_flow"
+    },
+    {
+      "id": "vip",
+      "label": "IN 1 ẢNH LỚN VIP NGAY LẬP TỨC",
+      "icon": "★",
+      "variant": "danger",
+      "actionKey": "vip",
+      "group": "vip_trigger"
+    },
+    {
+      "id": "cam_total",
+      "label": "Tổng thể",
+      "actionKey": "view",
+      "payload": "total",
+      "group": "camera_views"
+    },
+    {
+      "id": "cam_head",
+      "label": "Cận cảnh",
+      "actionKey": "view",
+      "payload": "head",
+      "group": "camera_views"
+    },
+    {
+      "id": "cam_top",
+      "label": "Từ trên",
+      "actionKey": "view",
+      "payload": "top",
+      "group": "camera_views"
+    },
+    {
+      "id": "cam_side",
+      "label": "Góc bên",
+      "actionKey": "view",
+      "payload": "side",
+      "group": "camera_views"
+    },
+    {
+      "id": "cam_front",
+      "label": "Mặt trước",
+      "actionKey": "view",
+      "payload": "front",
+      "group": "camera_views"
+    }
+  ]
+}

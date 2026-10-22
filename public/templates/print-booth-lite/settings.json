@@ -1,0 +1,111 @@
+{
+  "id": "print_booth_lite",
+  "name": "Máy In 3D Tối Giản (Siêu Nhẹ)",
+  "description": "Bản máy in 3D tối giản, loại bỏ hoàn toàn hạt bụi & vệt sáng chói, tập trung hiển thị ảnh sắc nét, mượt mà 60 FPS, tiết kiệm tối đa CPU/RAM khi live 24h.",
+  "icon": "⚡",
+  "badge": "Siêu Nhẹ",
+  "features": [
+    "Không hiệu ứng hạt (Zero Lag)",
+    "Không đèn chói mắt",
+    "Ảnh chân dung cực nét",
+    "Tiết kiệm tối đa CPU/RAM"
+  ],
+  "settingsSchema": [
+    {
+      "key": "speed",
+      "label": "Tốc độ in",
+      "type": "range",
+      "defaultValue": 1.6,
+      "min": 0.5,
+      "max": 4.0,
+      "step": 0.1,
+      "unit": "×"
+    },
+    {
+      "key": "cardsPerSheet",
+      "label": "Số ảnh mỗi mẻ in",
+      "type": "buttons",
+      "defaultValue": 6,
+      "options": [
+        { "label": "4 Ảnh", "value": 4 },
+        { "label": "6 Ảnh", "value": 6 },
+        { "label": "8 Ảnh", "value": 8 }
+      ]
+    },
+    {
+      "key": "theme",
+      "label": "Chủ đề màu sắc",
+      "type": "buttons",
+      "defaultValue": 0,
+      "options": [
+        { "label": "Mặc định (Nhẹ)", "value": 0, "color": "#3b82f6" },
+        { "label": "Tết VN", "value": 1, "color": "#e2412c" },
+        { "label": "Giáng Sinh", "value": 2, "color": "#d8443c" },
+        { "label": "Đêm Tiệc", "value": 3, "color": "#b06bff" },
+        { "label": "Đèn Sáng", "value": 4, "color": "#0284c7" },
+        { "label": "Nắng Vàng", "value": 5, "color": "#d97706" }
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "id": "toggle-play",
+      "label": "Tạm dừng / Tiếp tục",
+      "icon": "⏯️",
+      "variant": "primary",
+      "actionKey": "toggle-play",
+      "group": "printer_flow"
+    },
+    {
+      "id": "turbo",
+      "label": "Turbo ×3",
+      "icon": "⚡",
+      "variant": "warning",
+      "actionKey": "turbo",
+      "group": "printer_flow"
+    },
+    {
+      "id": "reset",
+      "label": "In lại từ đầu",
+      "icon": "🔁",
+      "variant": "secondary",
+      "actionKey": "reset",
+      "group": "printer_flow"
+    },
+    {
+      "id": "cam_total",
+      "label": "Tổng thể",
+      "actionKey": "view",
+      "payload": "total",
+      "group": "camera_views"
+    },
+    {
+      "id": "cam_head",
+      "label": "Cận cảnh",
+      "actionKey": "view",
+      "payload": "head",
+      "group": "camera_views"
+    },
+    {
+      "id": "cam_top",
+      "label": "Từ trên",
+      "actionKey": "view",
+      "payload": "top",
+      "group": "camera_views"
+    },
+    {
+      "id": "cam_front",
+      "label": "Mặt trước",
+      "actionKey": "view",
+      "payload": "front",
+      "group": "camera_views"
+    },
+    {
+      "id": "cam_side",
+      "label": "Góc bên",
+      "actionKey": "view",
+      "payload": "side",
+      "group": "camera_views"
+    }
+  ]
+}

@@ -4,20 +4,14 @@ import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import os from 'node:os'
 import { update } from './update'
+import { startLocalServer, type ServerInstance } from './server'
+import { db } from './db'
+import { TikTokManager, LiveSessionInstance } from './tiktok'
+import { loadAllTemplates, getTemplateById } from './templates'
 
 const require = createRequire(import.meta.url)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-// The built directory structure
-//
-// ├─┬ dist-electron
-// │ ├─┬ main
-// │ │ └── index.js    > Electron-Main
-// │ └─┬ preload
-// │   └── index.mjs   > Preload-Scripts
-// ├─┬ dist
-// │ └── index.html    > Electron-Renderer
-//
 process.env.APP_ROOT = path.join(__dirname, '../..')
 
 export const MAIN_DIST = path.join(process.env.APP_ROOT, 'dist-electron')
@@ -28,10 +22,7 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
   ? path.join(process.env.APP_ROOT, 'public')
   : RENDERER_DIST
 
-// Disable GPU Acceleration for Windows 7
 if (process.platform === 'win32' && os.release().startsWith('6.1')) app.disableHardwareAcceleration()
-
-// Set application name for Windows 10+ notifications
 if (process.platform === 'win32') app.setAppUserModelId(app.getName())
 
 if (!app.requestSingleInstanceLock()) {
@@ -43,54 +34,314 @@ let win: BrowserWindow | null = null
 const preload = path.join(__dirname, '../preload/index.mjs')
 const indexHtml = path.join(RENDERER_DIST, 'index.html')
 
+let localServer: ServerInstance | null = null
+let tiktokManager: TikTokManager | null = null
+
 async function createWindow() {
   win = new BrowserWindow({
-    title: 'Main window',
+    title: 'TikTok Live Stream 3D Print Booth Multi-Manager',
+    width: 1400,
+    height: 900,
+    minWidth: 1024,
+    minHeight: 720,
     icon: path.join(process.env.VITE_PUBLIC, 'favicon.ico'),
     webPreferences: {
       preload,
-      // Warning: Enable nodeIntegration and disable contextIsolation is not secure in production
-      // nodeIntegration: true,
-
-      // Consider using contextBridge.exposeInMainWorld
-      // Read more on https://www.electronjs.org/docs/latest/tutorial/context-isolation
-      // contextIsolation: false,
+      nodeIntegration: false,
+      contextIsolation: true,
     },
   })
 
-  if (VITE_DEV_SERVER_URL) { // #298
+  // 1. Initialize SQLite Database
+  const dbPath = path.join(process.env.APP_ROOT, 'live-stream.sqlite')
+  db.init(dbPath)
+
+  // 2. Start local HTTP & WebSocket server
+  try {
+    localServer = await startLocalServer(process.env.VITE_PUBLIC, 3210)
+    console.log(`[Local Server] Running on port ${localServer.port}`)
+    localServer.onClientsChange = (counts) => {
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('preview:clients-change', counts)
+      }
+    }
+  } catch (err) {
+    console.error('[Local Server] Error:', err)
+  }
+
+  // 3. Initialize TikTok Multi-Session Manager
+  tiktokManager = new TikTokManager((event, data) => {
+    // Send event to React renderer UI
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('session:event', { event, data })
+    }
+
+    // Broadcast to matching OBS overlay via WebSocket
+    if (localServer && data?.sessionKey) {
+      const sessionKey = data.sessionKey
+      if (event === 'user_added') {
+        localServer.broadcastToKey(sessionKey, {
+          type: 'ADD_USER',
+          user: {
+            id: data.user.id,
+            name: data.user.name,
+            photoUrl: data.user.photoUrl ? `/api/proxy-img?url=${encodeURIComponent(data.user.photoUrl)}` : '',
+            isVip: !!data.user.isVip,
+          },
+        })
+      } else if (event === 'user_removed') {
+        localServer.broadcastToKey(sessionKey, {
+          type: 'REMOVE_USER',
+          id: data.id,
+        })
+      } else if (event === 'queue_cleared') {
+        localServer.broadcastToKey(sessionKey, {
+          type: 'CLEAR_QUEUE',
+        })
+      } else if (event === 'settings') {
+        localServer.broadcastToKey(sessionKey, {
+          type: 'SET_SETTINGS',
+          settings: data.settings,
+        })
+      }
+    }
+  })
+
+  // Handle WebSocket new connections: send initial state of requested stream key
+  if (localServer) {
+    const sendSessionInit = (ws: any, session: LiveSessionInstance) => {
+      if (ws.readyState === 1) {
+        const tmpl = getTemplateById(session.templateId, process.env.VITE_PUBLIC)
+        ws.send(
+          JSON.stringify({
+            type: 'INIT_STATE',
+            streamKey: session.streamKey,
+            templateId: session.templateId,
+            entryUrl: `/${tmpl?.entryFile || 'templates/print-booth-3d/index.html'}`,
+            settings: session.settings,
+            queue: session.getQueue().map((q) => ({
+              id: q.id,
+              name: q.name,
+              photoUrl: q.photo_url ? `/api/proxy-img?url=${encodeURIComponent(q.photo_url)}` : '',
+              isVip: q.is_vip === 1,
+            })),
+          }),
+        )
+      }
+    }
+
+    localServer.wss.on('connection', (ws: any, req: any) => {
+      const parsedUrl = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`)
+      const streamKey = parsedUrl.searchParams.get('key') || 'live_default'
+
+      let session: LiveSessionInstance | undefined = tiktokManager?.getSessionByStreamKey(streamKey)
+      if (!session) {
+        const all = tiktokManager?.getAllSessions() || []
+        session = all[0]
+      }
+
+      if (session) {
+        sendSessionInit(ws, session)
+      }
+
+      ws.on('message', (msg: any) => {
+        try {
+          const parsed = JSON.parse(msg.toString())
+          if (parsed.type === 'SUBSCRIBE' && parsed.key) {
+            const target = tiktokManager?.getSessionByStreamKey(parsed.key)
+            if (target) {
+              sendSessionInit(ws, target)
+            }
+          } else if (parsed.type === 'SYNC_STATUS' && win && !win.isDestroyed()) {
+            win.webContents.send('overlay:sync', {
+              streamKey: parsed.streamKey || streamKey,
+              ...parsed,
+            })
+          }
+        } catch {
+          // Ignore
+        }
+      })
+    })
+  }
+
+  if (VITE_DEV_SERVER_URL) {
     win.loadURL(VITE_DEV_SERVER_URL)
-    // Open devTool if the app is not packaged
-    win.webContents.openDevTools()
   } else {
     win.loadFile(indexHtml)
   }
 
-  // Test actively push message to the Electron-Renderer
-  win.webContents.on('did-finish-load', () => {
-    win?.webContents.send('main-process-message', new Date().toLocaleString())
-  })
-
-  // Make all links open with the browser, not with the application
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('https:')) shell.openExternal(url)
+    if (url.startsWith('https:') || url.startsWith('http:')) {
+      shell.openExternal(url)
+    }
     return { action: 'deny' }
   })
 
-  // Auto update
   update(win)
 }
+
+// ---------------- IPC HANDLERS ----------------
+
+ipcMain.handle('preview:get-clients', () => {
+  return localServer ? localServer.getAllClientCounts() : {}
+})
+
+ipcMain.handle('preview:open', (_, streamKey?: string) => {
+  const port = localServer ? localServer.port : 3210
+  const key = streamKey || 'live_default'
+  const url = `http://localhost:${port}/preview?key=${encodeURIComponent(key)}`
+  shell.openExternal(url)
+  return { success: true }
+})
+
+ipcMain.handle('server:get-info', () => {
+  const port = localServer ? localServer.port : 3210
+  const tmps = loadAllTemplates(process.env.VITE_PUBLIC)
+  return {
+    port,
+    baseObsUrl: `http://localhost:${port}`,
+    templates: tmps,
+  }
+})
+
+ipcMain.handle('templates:get-all', () => {
+  return loadAllTemplates(process.env.VITE_PUBLIC)
+})
+
+ipcMain.handle('sessions:update-template', (_, { id, templateId }) => {
+  const session = tiktokManager?.getSession(id)
+  if (!session) return { success: false }
+  session.updateTemplate(templateId)
+
+  // Broadcast realtime template change to OBS overlay
+  if (localServer) {
+    const tmpl = getTemplateById(templateId, process.env.VITE_PUBLIC)
+    localServer.broadcastToKey(session.streamKey, {
+      type: 'CHANGE_TEMPLATE',
+      templateId,
+      entryUrl: `/${tmpl?.entryFile || 'templates/print-booth-3d/index.html'}`,
+    })
+  }
+
+  return { success: true }
+})
+
+// Get all sessions
+ipcMain.handle('sessions:get-all', () => {
+  return tiktokManager?.getAllSessions().map((s) => s.getStatus()) || []
+})
+
+// Create session
+ipcMain.handle('sessions:create', (_, data) => {
+  const session = tiktokManager?.createSession(data)
+  return session ? session.getStatus() : null
+})
+
+// Delete session
+ipcMain.handle('sessions:delete', (_, id: string) => {
+  tiktokManager?.deleteSession(id)
+  return { success: true }
+})
+
+// Start a live session
+ipcMain.handle('sessions:start', async (_, { id }) => {
+  const session = tiktokManager?.getSession(id)
+  if (!session) return { success: false, error: 'Không tìm thấy phiên live' }
+  return await session.start()
+})
+
+// Stop a live session
+ipcMain.handle('sessions:stop', (_, { id }) => {
+  const session = tiktokManager?.getSession(id)
+  if (!session) return { success: false, error: 'Không tìm thấy phiên live' }
+  session.stop()
+  return { success: true }
+})
+
+// Update settings of a session
+ipcMain.handle('sessions:update-settings', (_, { id, settings }) => {
+  const session = tiktokManager?.getSession(id)
+  if (!session) return { success: false }
+  session.updateSettings(settings)
+  return { success: true }
+})
+
+// Update TikTok config of a session
+ipcMain.handle('sessions:update-config', (_, { id, config }) => {
+  const session = tiktokManager?.getSession(id)
+  if (!session) return { success: false }
+  session.updateConfig(config)
+  return { success: true }
+})
+
+// Queue operations
+ipcMain.handle('queue:add-manual', (_, { sessionId, name, photoUrl, isVip }) => {
+  const session = tiktokManager?.getSession(sessionId)
+  if (!session) return { success: false }
+  session.addToQueue({
+    uniqueId: `manual_${Date.now()}`,
+    name: name || 'Khách thủ công',
+    photoUrl: photoUrl || '',
+    priority: isVip ? 100 : 50,
+    isVip: !!isVip,
+    source: 'manual',
+    comment: 'Thêm thủ công',
+  })
+  return { success: true }
+})
+
+ipcMain.handle('queue:add-batch', (_, { sessionId, items }) => {
+  const session = tiktokManager?.getSession(sessionId)
+  if (!session || !Array.isArray(items)) return { success: false }
+  session.addBatchToQueue(items)
+  return { success: true }
+})
+
+ipcMain.handle('queue:remove', (_, { sessionId, id }) => {
+  const session = tiktokManager?.getSession(sessionId)
+  if (!session) return { success: false }
+  session.removeFromQueue(id)
+  return { success: true }
+})
+
+ipcMain.handle('queue:prioritize-vip', (_, { sessionId, id }) => {
+  const session = tiktokManager?.getSession(sessionId)
+  if (!session) return { success: false }
+  session.prioritizeVip(id)
+  return { success: true }
+})
+
+ipcMain.handle('queue:clear', (_, { sessionId }) => {
+  const session = tiktokManager?.getSession(sessionId)
+  if (!session) return { success: false }
+  session.clearQueue()
+  return { success: true }
+})
+
+// Realtime controls sent to specific OBS overlay
+ipcMain.handle('control:send-action', (_, { streamKey, action, value }) => {
+  if (localServer) {
+    localServer.broadcastToKey(streamKey, {
+      type: 'ACTION',
+      action,
+      value,
+    })
+  }
+  return { success: true }
+})
 
 app.whenReady().then(createWindow)
 
 app.on('window-all-closed', () => {
+  tiktokManager?.stopAll()
+  localServer?.close()
   win = null
   if (process.platform !== 'darwin') app.quit()
 })
 
 app.on('second-instance', () => {
   if (win) {
-    // Focus on the main window if the user tried to open another
     if (win.isMinimized()) win.restore()
     win.focus()
   }
@@ -102,22 +353,5 @@ app.on('activate', () => {
     allWindows[0].focus()
   } else {
     createWindow()
-  }
-})
-
-// New window example arg: new windows url
-ipcMain.handle('open-win', (_, arg) => {
-  const childWindow = new BrowserWindow({
-    webPreferences: {
-      preload,
-      nodeIntegration: true,
-      contextIsolation: false,
-    },
-  })
-
-  if (VITE_DEV_SERVER_URL) {
-    childWindow.loadURL(`${VITE_DEV_SERVER_URL}#${arg}`)
-  } else {
-    childWindow.loadFile(indexHtml, { hash: arg })
   }
 })

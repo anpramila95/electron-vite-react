@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="vi">
+    <head>
+        <meta charset="utf-8" />
+        <meta
+            name="viewport"
+            content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"
+        />
+        <title>PRINT BOOTH 3D — In Avatar TikTok</title>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link
+            href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Space+Grotesk:wght@400;500;700&display=swap"
+            rel="stylesheet"
+        />
+        <link href="index.css" rel="stylesheet" />
+    </head>
+    <body>
+        <canvas id="app"></canvas>
+
+        <div class="hud">
+            <div class="top">
+                <div class="brand">
+                    <h1 id="brand-title">PRINT <em>BOOTH</em> 3D</h1>
+                    <div class="sub" id="brand-sub">in avatar tiktok theo mẫu</div>
+                </div>
+                <div class="stats">
+                    <div class="chip">
+                        <span>Trang</span><b id="st-mode">6 ẢNH</b>
+                    </div>
+                    <div class="chip">
+                        <span>Mẻ in</span><b id="st-batch">#01</b>
+                    </div>
+                    <div class="chip">
+                        <span>Đã in</span><b id="st-printed">0</b>
+                    </div>
+                    <div class="chip hot">
+                        <span>Điểm</span><b id="st-score">0</b>
+                    </div>
+                    <div
+                        class="chip"
+                        style="border-color: rgba(255, 215, 0, 0.45)"
+                    >
+                        <span>Hàng chờ</span
+                        ><b id="st-queue" style="color: #ffd700">0</b>
+                    </div>
+                </div>
+            </div>
+
+            <div class="views">
+                <button data-view="total" class="on">Tổng thể</button>
+                <button data-view="head">Cận cảnh</button>
+                <button data-view="top">Từ trên xuống</button>
+                <button data-view="side">Góc bên</button>
+                <button data-view="front">Mặt trước</button>
+            </div>
+
+            <div class="bottom">
+                <div class="themes" id="themes">
+                    <div class="lbl">Chủ đề</div>
+                    <button class="theme on" data-theme="0">
+                        <i style="background: #3b82f6"></i>Mặc định (Nhẹ)
+                    </button>
+                    <button class="theme" data-theme="1">
+                        <i style="background: #e2412c"></i>Tết Việt Nam
+                    </button>
+                    <button class="theme" data-theme="2">
+                        <i style="background: #d8443c"></i>Giáng Sinh
+                    </button>
+                    <button class="theme" data-theme="3">
+                        <i style="background: #b06bff"></i>Đêm Tiệc Vui
+                    </button>
+                    <button class="theme" data-theme="4">
+                        <i style="background: #25c9ff"></i>Đèn Sáng
+                    </button>
+                    <button class="theme" data-theme="5">
+                        <i style="background: #e0a054"></i>Ánh Nắng Vàng
+                    </button>
+                </div>
+
+                <div class="slots" id="slots">
+                    <div class="slot"></div>
+                    <div class="slot"></div>
+                    <div class="slot"></div>
+                    <div class="slot"></div>
+                    <div class="slot"></div>
+                    <div class="slot"></div>
+                    <div class="slot"></div>
+                    <div class="slot"></div>
+                    <div class="fullslot" id="fullslot">1 ẢNH LỚN VIP</div>
+                </div>
+
+                <div class="bar">
+                    <button id="btn-play">Tạm dừng</button>
+                    <button id="btn-turbo">Turbo ×3</button>
+                    <button id="btn-rotate">Tự xoay</button>
+                    <div class="layout-group" id="layout-group">
+                        <span class="layout-lbl">Số ảnh</span>
+                        <button class="btn-layout" data-count="4">4</button>
+                        <button class="btn-layout on" data-count="6">6</button>
+                        <button class="btn-layout" data-count="8">8</button>
+                    </div>
+                    <button id="btn-reset">In lại từ đầu</button>
+                    <div class="slider">
+                        <label>Tốc độ</label>
+                        <input
+                            id="speed"
+                            type="range"
+                            min="0.5"
+                            max="4"
+                            step="0.1"
+                            value="1.6"
+                        />
+                        <b
+                            id="speed-val"
+                            style="font-size: 13px; min-width: 34px"
+                            >1.6×</b
+                        >
+                    </div>
+                </div>
+                <div class="hint">
+                    <b>Ctrl+M</b> ẩn/hiện menu · <b>1–5</b> góc máy · <b>Space</b> tạm dừng
+                </div>
+            </div>
+        </div>
+
+        <div id="vip-toast" class="vip-toast">★ ĐÃ ĐÓNG DẤU VIP ★</div>
+        <div id="key-toast" class="key-toast">
+            Bấm <b>Ctrl + M</b> để mở Menu
+        </div>
+
+        <div class="loader" id="loader">
+            <h2>PRINT BOOTH 3D</h2>
+            <div class="ldbar"><i></i></div>
+        </div>
+
+        <script type="importmap">
+            {
+                "imports": {
+                    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+                }
+            }
+        </script>
+        <script type="module" src="index.js"></script>
+    </body>
+</html>
