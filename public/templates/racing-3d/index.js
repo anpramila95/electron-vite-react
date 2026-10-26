@@ -15,7 +15,8 @@
   const streamKey = params.get('key') || 'live_default';
 
   // HUD Elements
-  const hudLaps = document.getElementById('hud-laps');
+  const hudTimer = document.getElementById('hud-timer');
+  const hudTopDist = document.getElementById('hud-top-dist');
   const hudStatus = document.getElementById('hud-status');
   const hudQueue = document.getElementById('hud-queue');
   const racersListEl = document.getElementById('racers-list');
@@ -24,14 +25,25 @@
   const podiumModal = document.getElementById('podium-modal');
   const p1Name = document.getElementById('p1-name');
   const p1Avatar = document.getElementById('p1-avatar');
+  const p1Pts = document.getElementById('p1-pts');
   const p2Name = document.getElementById('p2-name');
   const p2Avatar = document.getElementById('p2-avatar');
+  const p2Pts = document.getElementById('p2-pts');
   const p3Name = document.getElementById('p3-name');
   const p3Avatar = document.getElementById('p3-avatar');
+  const p3Pts = document.getElementById('p3-pts');
   const podiumTimer = document.getElementById('podium-next-timer');
   const cameraBar = document.getElementById('camera-bar');
   const btnHideCam = document.getElementById('btn-hide-cam');
   const btnShowCam = document.getElementById('btn-show-cam');
+
+  // Leaderboard Tabs & Footer
+  const tabHeatBtn = document.getElementById('tab-heat-btn');
+  const tabSeasonBtn = document.getElementById('tab-season-btn');
+  const lbHeaderText = document.getElementById('lb-header-text');
+  const lbHeatInfo = document.getElementById('lb-heat-info');
+  const lbFooter = document.getElementById('lb-footer');
+  const btnResetChampionship = document.getElementById('btn-reset-championship');
 
   // ==================== REALTIME RACE AUDIO SYNTHESIZER ====================
   const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -163,10 +175,14 @@
   let cameraMode = 'chase';
   let raceActive = false;
   let raceFinished = false;
-  let currentLap = 1;
-  let maxLaps = 3;
+  let raceDuration = 60; // Duration of each heat countdown in seconds
+  let raceTimeRemaining = 60;
   let racersPerHeat = 30;
   let baseSpeed = 1.8;
+  let raceStartTime = 0;
+  let raceElapsedTime = 0;
+  let heatNumber = 1;
+  let activeTab = 'heat'; // 'heat' | 'season'
   let currentTheme = 'galaxy';
   let currentWeather = 'none';
   let showCameraBarConfig = true;
@@ -187,24 +203,33 @@
   function initThree() {
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x060913);
-    scene.fog = new THREE.FogExp2(0x060913, 0.005);
+    scene.fog = new THREE.FogExp2(0x060913, 0.003);
 
-    camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.5, 600);
-    camera.position.set(0, 40, 70);
+    camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.5, 1200);
+    camera.position.set(0, 50, 90);
 
     renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
 
     // Lighting
-    ambientLight = new THREE.AmbientLight(0xffffff, 1.4);
+    ambientLight = new THREE.AmbientLight(0xffffff, 1.5);
     scene.add(ambientLight);
 
-    dirLight = new THREE.DirectionalLight(0xffffff, 2.2);
-    dirLight.position.set(50, 80, 50);
+    dirLight = new THREE.DirectionalLight(0xffffff, 2.4);
+    dirLight.position.set(100, 160, 100);
     dirLight.castShadow = true;
+    dirLight.shadow.camera.left = -260;
+    dirLight.shadow.camera.right = 260;
+    dirLight.shadow.camera.top = 260;
+    dirLight.shadow.camera.bottom = -260;
+    dirLight.shadow.camera.near = 10;
+    dirLight.shadow.camera.far = 600;
+    dirLight.shadow.mapSize.width = 2048;
+    dirLight.shadow.mapSize.height = 2048;
     scene.add(dirLight);
 
     buildRacetrack();
@@ -322,22 +347,26 @@
   }
 
   function buildRacetrack() {
+    // Grand sweeping high-speed circuit (~370m footprint)
     const points = [
-      new THREE.Vector3(0, 0, -85),
-      new THREE.Vector3(65, 2, -65),
-      new THREE.Vector3(95, 4, 0),
-      new THREE.Vector3(75, 0, 75),
-      new THREE.Vector3(10, 3, 95),
-      new THREE.Vector3(-55, 0, 75),
-      new THREE.Vector3(-95, 4, 20),
-      new THREE.Vector3(-75, 1, -55),
-      new THREE.Vector3(-20, 0, -80),
+      new THREE.Vector3(0, 0, -170),
+      new THREE.Vector3(90, 3, -155),
+      new THREE.Vector3(160, 6, -90),
+      new THREE.Vector3(190, 2, 5),
+      new THREE.Vector3(160, 0, 110),
+      new THREE.Vector3(90, 5, 175),
+      new THREE.Vector3(0, 7, 190),
+      new THREE.Vector3(-100, 3, 155),
+      new THREE.Vector3(-170, 1, 90),
+      new THREE.Vector3(-195, 5, -15),
+      new THREE.Vector3(-155, 7, -110),
+      new THREE.Vector3(-80, 2, -160),
     ];
 
     trackCurve = new THREE.CatmullRomCurve3(points, true);
 
-    const trackWidth = 15;
-    const segments = 260;
+    const trackWidth = 24; // Wider track for up to 9-lane dueling
+    const segments = 360;
     const trackGeo = new THREE.BufferGeometry();
     const positions = [];
     const uvs = [];
@@ -354,8 +383,8 @@
 
       positions.push(pLeft.x, pLeft.y, pLeft.z);
       positions.push(pRight.x, pRight.y, pRight.z);
-      uvs.push(0, t * 24);
-      uvs.push(1, t * 24);
+      uvs.push(0, t * 40);
+      uvs.push(1, t * 40);
     }
 
     const indices = [];
@@ -382,38 +411,152 @@
     trackMesh.receiveShadow = true;
     scene.add(trackMesh);
 
-    // Guardrails
+    // Guardrails & Glowing Curbs
     railsMesh = new THREE.Group();
     railMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
     const innerPoints = [];
     const outerPoints = [];
+    const innerCurbs = [];
+    const outerCurbs = [];
+
     for (let i = 0; i <= segments; i++) {
       const t = i / segments;
       const point = trackCurve.getPointAt(t);
       const tangent = trackCurve.getTangentAt(t).normalize();
       const normal = new THREE.Vector3(0, 1, 0);
       const binormal = new THREE.Vector3().crossVectors(tangent, normal).normalize();
-      innerPoints.push(point.clone().add(binormal.clone().multiplyScalar(trackWidth / 2 + 0.5)).add(new THREE.Vector3(0, 0.8, 0)));
-      outerPoints.push(point.clone().add(binormal.clone().multiplyScalar(-trackWidth / 2 - 0.5)).add(new THREE.Vector3(0, 0.8, 0)));
+
+      innerPoints.push(point.clone().add(binormal.clone().multiplyScalar(trackWidth / 2 + 0.8)).add(new THREE.Vector3(0, 0.9, 0)));
+      outerPoints.push(point.clone().add(binormal.clone().multiplyScalar(-trackWidth / 2 - 0.8)).add(new THREE.Vector3(0, 0.9, 0)));
+      innerCurbs.push(point.clone().add(binormal.clone().multiplyScalar(trackWidth / 2 + 0.1)).add(new THREE.Vector3(0, 0.15, 0)));
+      outerCurbs.push(point.clone().add(binormal.clone().multiplyScalar(-trackWidth / 2 - 0.1)).add(new THREE.Vector3(0, 0.15, 0)));
     }
 
-    const railGeo1 = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(innerPoints, true), 220, 0.3, 6, true);
-    const railGeo2 = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(outerPoints, true), 220, 0.3, 6, true);
+    const railGeo1 = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(innerPoints, true), 300, 0.35, 6, true);
+    const railGeo2 = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(outerPoints, true), 300, 0.35, 6, true);
     railsMesh.add(new THREE.Mesh(railGeo1, railMat));
     railsMesh.add(new THREE.Mesh(railGeo2, railMat));
+
+    // LED Glowing Edge Curbs (Rumble Strips)
+    const curbMat1 = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const curbMat2 = new THREE.MeshBasicMaterial({ color: 0xef4444 });
+    const curbGeo1 = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(innerCurbs, true), 240, 0.2, 4, true);
+    const curbGeo2 = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(outerCurbs, true), 240, 0.2, 4, true);
+    railsMesh.add(new THREE.Mesh(curbGeo1, curbMat1));
+    railsMesh.add(new THREE.Mesh(curbGeo2, curbMat2));
     scene.add(railsMesh);
 
-    // Finish Line Arch
+    // ==================== TRACK LIGHTING: 28 STREETLIGHTS & FLOODLIGHTS ====================
+    const poleMat = new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.85, roughness: 0.2 });
+    const lampMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const lampGlowMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
+
+    for (let i = 0; i < 28; i++) {
+      const t = i / 28;
+      const pt = trackCurve.getPointAt(t);
+      const tangent = trackCurve.getTangentAt(t).normalize();
+      const normal = new THREE.Vector3(0, 1, 0);
+      const binormal = new THREE.Vector3().crossVectors(tangent, normal).normalize();
+      const side = i % 2 === 0 ? 1 : -1;
+
+      const lightGroup = new THREE.Group();
+      // Main Vertical Light Pole
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.5, 20, 8), poleMat);
+      pole.position.y = 10;
+      lightGroup.add(pole);
+
+      // Horizontal Overhang Arm extending over the track
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, 7), poleMat);
+      arm.position.set(0, 19.5, -side * 3);
+      lightGroup.add(arm);
+
+      // Dual High-Lumen Lamp Head
+      const lampHead = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.5, 3.2), lampMat);
+      lampHead.position.set(0, 19.2, -side * 5.8);
+      lightGroup.add(lampHead);
+
+      // Neon Trim on Lamp
+      const lampTrim = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.2, 3.4), lampGlowMat);
+      lampTrim.position.set(0, 19.5, -side * 5.8);
+      lightGroup.add(lampTrim);
+
+      // Local Point Light every second pole for warm road highlights
+      if (i % 2 === 0) {
+        const pLight = new THREE.PointLight(0xfff7ed, 1.2, 45);
+        pLight.position.set(0, 18, -side * 5.8);
+        lightGroup.add(pLight);
+      }
+
+      const basePos = pt.clone().add(binormal.clone().multiplyScalar(side * (trackWidth / 2 + 4.5)));
+      lightGroup.position.copy(basePos);
+      lightGroup.lookAt(pt);
+      scene.add(lightGroup);
+    }
+
+    // ==================== OVERHEAD NEON SPEED GANTRIES ====================
+    const gantryCheckpoints = [0.25, 0.5, 0.75];
+    const gantryMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.9 });
+    const neonSpeedMat = new THREE.MeshBasicMaterial({ color: 0x06b6d4 });
+
+    gantryCheckpoints.forEach((gt) => {
+      const gPt = trackCurve.getPointAt(gt);
+      const gTangent = trackCurve.getTangentAt(gt).normalize();
+      const gNormal = new THREE.Vector3(0, 1, 0);
+      const gBinormal = new THREE.Vector3().crossVectors(gTangent, gNormal).normalize();
+
+      const gGroup = new THREE.Group();
+      // Left and right pillars
+      const p1 = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.6, 16, 8), gantryMat);
+      p1.position.set(trackWidth / 2 + 2.5, 8, 0);
+      const p2 = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.6, 16, 8), gantryMat);
+      p2.position.set(-trackWidth / 2 - 2.5, 8, 0);
+      gGroup.add(p1);
+      gGroup.add(p2);
+
+      // Crossbeam Truss
+      const beam = new THREE.Mesh(new THREE.BoxGeometry(trackWidth + 6, 2.2, 2.2), gantryMat);
+      beam.position.set(0, 15.5, 0);
+      gGroup.add(beam);
+
+      // Glowing Neon Chevron Sign
+      const neonBanner = new THREE.Mesh(new THREE.BoxGeometry(trackWidth - 4, 1.2, 0.4), neonSpeedMat);
+      neonBanner.position.set(0, 15.5, 1.2);
+      gGroup.add(neonBanner);
+
+      gGroup.position.copy(gPt);
+      gGroup.lookAt(trackCurve.getPointAt((gt + 0.01) % 1.0));
+      scene.add(gGroup);
+    });
+
+    // ==================== FINISH LINE ARCH ====================
     const startPoint = trackCurve.getPointAt(0);
-    const archMat = new THREE.MeshStandardMaterial({ color: 0xfacc15, metalness: 0.8, roughness: 0.2 });
-    const archMesh = new THREE.Mesh(new THREE.BoxGeometry(trackWidth + 3, 6.5, 1.5), archMat);
-    archMesh.position.copy(startPoint).add(new THREE.Vector3(0, 4.2, 0));
+    const archMat = new THREE.MeshStandardMaterial({ color: 0xfacc15, metalness: 0.85, roughness: 0.2 });
+    const archMesh = new THREE.Mesh(new THREE.BoxGeometry(trackWidth + 7, 7.5, 2.2), archMat);
+    archMesh.position.copy(startPoint).add(new THREE.Vector3(0, 5.2, 0));
     archMesh.lookAt(trackCurve.getPointAt(0.01));
+
+    // Finish Crown on Arch
+    const archCrown = create3DCrownMesh();
+    archCrown.scale.set(2.2, 2.2, 2.2);
+    archCrown.position.set(0, 5.0, 0);
+    archMesh.add(archCrown);
+
+    // Glowing Checkered Pattern Board
+    const checkMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const checkBoard = new THREE.Mesh(new THREE.BoxGeometry(trackWidth + 4, 1.6, 0.4), checkMat);
+    checkBoard.position.set(0, 1.5, 1.2);
+    archMesh.add(checkBoard);
+
+    // Finish Line Spotlights
+    const finishSpot = new THREE.PointLight(0xfef08a, 2.5, 55);
+    finishSpot.position.set(0, 8, 0);
+    archMesh.add(finishSpot);
+
     scene.add(archMesh);
   }
 
   function buildEnvironment() {
-    const groundGeo = new THREE.PlaneGeometry(550, 550);
+    const groundGeo = new THREE.PlaneGeometry(950, 950);
     const groundMat = new THREE.MeshStandardMaterial({ color: 0x050811, roughness: 0.95 });
     groundMesh = new THREE.Mesh(groundGeo, groundMat);
     groundMesh.rotation.x = -Math.PI / 2;
@@ -424,7 +567,7 @@
     scene.add(envGroup);
   }
 
-  // Dynamic Terrain Themes (Galaxy / Mars / Arctic / Cyberpunk Neon / Desert Canyon / F1 Circuit)
+  // Dynamic Terrain Themes (10 Themes: Galaxy, Mars, Neon, Volcano, Aquatic, Golden City, Synthwave, Circuit, Desert, Arctic)
   function applyTheme(themeName) {
     currentTheme = themeName || 'galaxy';
 
@@ -449,41 +592,41 @@
       // 1. Giant Saturn-like Planet with Orbiting Ring
       const saturnGroup = new THREE.Group();
       const saturnBody = new THREE.Mesh(
-        new THREE.SphereGeometry(28, 24, 24),
+        new THREE.SphereGeometry(38, 24, 24),
         new THREE.MeshStandardMaterial({ color: 0xfbbf24, roughness: 0.6, metalness: 0.2 })
       );
-      const ringGeo = new THREE.RingGeometry(34, 56, 32);
+      const ringGeo = new THREE.RingGeometry(46, 75, 32);
       const ringMat = new THREE.MeshBasicMaterial({ color: 0xd97706, side: THREE.DoubleSide });
       const saturnRing = new THREE.Mesh(ringGeo, ringMat);
       saturnRing.rotation.x = Math.PI / 2.8;
       saturnGroup.add(saturnBody);
       saturnGroup.add(saturnRing);
-      saturnGroup.position.set(180, 85, -220);
+      saturnGroup.position.set(240, 110, -290);
       envGroup.add(saturnGroup);
 
       // 2. Terra Blue Planet
       const terraPlanet = new THREE.Mesh(
-        new THREE.SphereGeometry(18, 20, 20),
+        new THREE.SphereGeometry(24, 20, 20),
         new THREE.MeshStandardMaterial({ color: 0x0284c7, roughness: 0.5, metalness: 0.3 })
       );
-      terraPlanet.position.set(-190, 70, 180);
+      terraPlanet.position.set(-260, 95, 230);
       envGroup.add(terraPlanet);
 
       // 3. Purple Nebula Moon
       const purpleMoon = new THREE.Mesh(
-        new THREE.SphereGeometry(10, 16, 16),
+        new THREE.SphereGeometry(14, 16, 16),
         new THREE.MeshStandardMaterial({ color: 0x9333ea, roughness: 0.7 })
       );
-      purpleMoon.position.set(90, 95, 200);
+      purpleMoon.position.set(130, 125, 260);
       envGroup.add(purpleMoon);
 
       // 4. Floating Asteroids Belt
       const rockMat = new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.9, metalness: 0.2 });
-      for (let i = 0; i < 35; i++) {
-        const rad = 100 + Math.random() * 110;
+      for (let i = 0; i < 45; i++) {
+        const rad = 140 + Math.random() * 150;
         const angle = Math.random() * Math.PI * 2;
-        const h = 6 + Math.random() * 32;
-        const size = 5 + Math.random() * 9;
+        const h = 8 + Math.random() * 45;
+        const size = 6 + Math.random() * 12;
         const asteroid = new THREE.Mesh(new THREE.DodecahedronGeometry(size, 1), rockMat);
         asteroid.position.set(Math.cos(angle) * rad, h, Math.sin(angle) * rad);
         asteroid.rotation.set(Math.random(), Math.random(), Math.random());
@@ -493,24 +636,24 @@
       // 5. Orbital Space Relay Station
       const stationGroup = new THREE.Group();
       const stationHub = new THREE.Mesh(
-        new THREE.CylinderGeometry(4, 4, 16, 12),
+        new THREE.CylinderGeometry(5, 5, 22, 12),
         new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.8, roughness: 0.2 })
       );
       stationGroup.add(stationHub);
       const solarMat = new THREE.MeshBasicMaterial({ color: 0x0284c7 });
       for (let i = -1; i <= 1; i += 2) {
-        const wing = new THREE.Mesh(new THREE.BoxGeometry(18, 0.4, 6), solarMat);
-        wing.position.set(i * 12, 0, 0);
+        const wing = new THREE.Mesh(new THREE.BoxGeometry(25, 0.4, 8), solarMat);
+        wing.position.set(i * 16, 0, 0);
         stationGroup.add(wing);
       }
-      stationGroup.position.set(0, 48, 0);
+      stationGroup.position.set(0, 65, 0);
       envGroup.add(stationGroup);
     } else if (currentTheme === 'mars') {
       scene.background.set(0x2d0c03);
       scene.fog.color.set(0x2d0c03);
-      scene.fog.density = 0.0035;
+      scene.fog.density = 0.003;
       dirLight.color.set(0xffedd5);
-      dirLight.intensity = 2.2;
+      dirLight.intensity = 2.4;
       ambientLight.color.set(0x9a3412);
       ambientLight.intensity = 1.8;
 
@@ -518,22 +661,15 @@
       groundMesh.material.color.set(0x7c2d12);
       if (railMat) railMat.color.set(0xf97316);
 
-      // 1. Martian Red Sun & Phobos Moons
+      // Mars Sun & Phobos
       const marsSun = new THREE.Mesh(
-        new THREE.SphereGeometry(16, 16, 16),
+        new THREE.SphereGeometry(22, 16, 16),
         new THREE.MeshBasicMaterial({ color: 0xfed7aa })
       );
-      marsSun.position.set(150, 60, -220);
+      marsSun.position.set(220, 85, -290);
       envGroup.add(marsSun);
 
-      const phobos = new THREE.Mesh(
-        new THREE.DodecahedronGeometry(8, 1),
-        new THREE.MeshStandardMaterial({ color: 0x78716c, roughness: 0.9 })
-      );
-      phobos.position.set(-130, 85, 140);
-      envGroup.add(phobos);
-
-      // 2. Colony Bio-Domes (Geodesic Domes)
+      // Colony Bio-Domes
       const domeMat = new THREE.MeshStandardMaterial({
         color: 0x93c5fd,
         transparent: true,
@@ -543,9 +679,10 @@
       });
       const domeBaseMat = new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.8 });
       const domePositions = [
-        [70, 0, -50, 16],
-        [-80, 0, 50, 14],
-        [0, 0, 80, 12],
+        [100, 0, -80, 22],
+        [-110, 0, 70, 18],
+        [0, 0, 110, 16],
+        [-90, 0, -120, 20],
       ];
       domePositions.forEach(([x, y, z, r]) => {
         const dGroup = new THREE.Group();
@@ -558,37 +695,234 @@
         envGroup.add(dGroup);
       });
 
-      // 3. Mars Rovers beside the track
-      const roverMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, metalness: 0.7 });
-      const wheelMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.9 });
-      for (let k = 0; k < 2; k++) {
-        const rover = new THREE.Group();
-        const rBody = new THREE.Mesh(new THREE.BoxGeometry(4, 2, 6), roverMat);
-        rBody.position.y = 2.2;
-        rover.add(rBody);
-        const rMast = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 4), roverMat);
-        rMast.position.set(0, 4.5, 2);
-        rover.add(rMast);
-        const rPanel = new THREE.Mesh(new THREE.BoxGeometry(5, 0.2, 4), new THREE.MeshBasicMaterial({ color: 0x0284c7 }));
-        rPanel.position.set(0, 3.4, -0.5);
-        rover.add(rPanel);
-        rover.position.set(k === 0 ? 45 : -45, 0, k === 0 ? 30 : -30);
-        rover.rotation.y = k * Math.PI;
-        envGroup.add(rover);
-      }
-
-      // 4. Martian Basalt Boulders
+      // Martian Basalt Boulders
       const rockMat = new THREE.MeshStandardMaterial({ color: 0x9a3412, roughness: 0.95 });
-      for (let i = 0; i < 35; i++) {
-        const rad = 105 + Math.random() * 85;
+      for (let i = 0; i < 45; i++) {
+        const rad = 145 + Math.random() * 110;
         const angle = Math.random() * Math.PI * 2;
-        const h = 12 + Math.random() * 35;
-        const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(8 + Math.random() * 10, 1), rockMat);
-        rock.scale.set(1, h / 12, 1);
+        const h = 15 + Math.random() * 45;
+        const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(10 + Math.random() * 14, 1), rockMat);
+        rock.scale.set(1, h / 14, 1);
         rock.position.set(Math.cos(angle) * rad, h / 2 - 2, Math.sin(angle) * rad);
         envGroup.add(rock);
       }
+    } else if (currentTheme === 'volcano') {
+      // 🌋 Molten Lava Volcano Theme
+      scene.background.set(0x1a0502);
+      scene.fog.color.set(0x1a0502);
+      scene.fog.density = 0.0035;
+      dirLight.color.set(0xff3700);
+      dirLight.intensity = 2.6;
+      ambientLight.color.set(0xd97706);
+      ambientLight.intensity = 1.9;
+
+      trackMesh.material.color.set(0x1c0b08);
+      groundMesh.material.color.set(0x0f0402);
+      if (railMat) railMat.color.set(0xff3b00);
+
+      // Glowing Magma Fissures on the Ground
+      const lavaMat = new THREE.MeshBasicMaterial({ color: 0xff3b00 });
+      for (let f = 0; f < 8; f++) {
+        const lavaLake = new THREE.Mesh(new THREE.CircleGeometry(18 + Math.random() * 20, 16), lavaMat);
+        lavaLake.rotation.x = -Math.PI / 2;
+        const angle = (f / 8) * Math.PI * 2;
+        lavaLake.position.set(Math.cos(angle) * 120, 0.05, Math.sin(angle) * 120);
+        envGroup.add(lavaLake);
+      }
+
+      // Obsidian Basalt Towers
+      const basaltMat = new THREE.MeshStandardMaterial({ color: 0x27272a, roughness: 0.9, metalness: 0.2 });
+      for (let i = 0; i < 40; i++) {
+        const rad = 140 + Math.random() * 120;
+        const angle = Math.random() * Math.PI * 2;
+        const h = 20 + Math.random() * 55;
+        const col = new THREE.Mesh(new THREE.CylinderGeometry(4 + Math.random() * 5, 6 + Math.random() * 6, h, 6), basaltMat);
+        col.position.set(Math.cos(angle) * rad, h / 2, Math.sin(angle) * rad);
+        envGroup.add(col);
+      }
+    } else if (currentTheme === 'aquatic') {
+      // 🌊 Deep Ocean Atlantis Theme
+      scene.background.set(0x021622);
+      scene.fog.color.set(0x021622);
+      scene.fog.density = 0.003;
+      dirLight.color.set(0x67e8f9);
+      dirLight.intensity = 2.5;
+      ambientLight.color.set(0x0891b2);
+      ambientLight.intensity = 1.8;
+
+      trackMesh.material.color.set(0x082f49);
+      groundMesh.material.color.set(0x02111d);
+      if (railMat) railMat.color.set(0x22d3ee);
+
+      // Ancient Sunken Atlantis Marble Pillars & Arches
+      const marbleMat = new THREE.MeshStandardMaterial({ color: 0xe0f2fe, roughness: 0.4, metalness: 0.3 });
+      const runeMat = new THREE.MeshBasicMaterial({ color: 0x06b6d4 });
+      for (let i = 0; i < 20; i++) {
+        const t = i / 20;
+        const pt = trackCurve.getPointAt(t);
+        const col = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.6, 24, 12), marbleMat);
+        col.position.set(pt.x * 1.3, 12, pt.z * 1.3);
+        const rune = new THREE.Mesh(new THREE.TorusGeometry(3.5, 0.3, 8, 16), runeMat);
+        rune.position.set(pt.x * 1.3, 18, pt.z * 1.3);
+        envGroup.add(col);
+        envGroup.add(rune);
+      }
+
+      // Bioluminescent Coral Trees
+      const coralColors = [0x06b6d4, 0xd946ef, 0x10b981, 0x38bdf8];
+      for (let c = 0; c < 30; c++) {
+        const cColor = coralColors[c % coralColors.length];
+        const coralMat = new THREE.MeshBasicMaterial({ color: cColor });
+        const rad = 140 + Math.random() * 100;
+        const angle = Math.random() * Math.PI * 2;
+        const h = 12 + Math.random() * 25;
+        const coral = new THREE.Mesh(new THREE.ConeGeometry(5 + Math.random() * 5, h, 8), coralMat);
+        coral.position.set(Math.cos(angle) * rad, h / 2, Math.sin(angle) * rad);
+        envGroup.add(coral);
+      }
+    } else if (currentTheme === 'golden_city') {
+      // 🏛️ Roman Colosseum & Golden Empire
+      scene.background.set(0x1a120b);
+      scene.fog.color.set(0x1a120b);
+      scene.fog.density = 0.003;
+      dirLight.color.set(0xfef08a);
+      dirLight.intensity = 2.6;
+      ambientLight.color.set(0xd97706);
+      ambientLight.intensity = 1.7;
+
+      trackMesh.material.color.set(0x382813);
+      groundMesh.material.color.set(0x291d0e);
+      if (railMat) railMat.color.set(0xfacc15);
+
+      // Colosseum Marble Columns & Braziers
+      const colMat = new THREE.MeshStandardMaterial({ color: 0xfef9c3, roughness: 0.3, metalness: 0.2 });
+      const fireMat = new THREE.MeshBasicMaterial({ color: 0xf97316 });
+      for (let i = 0; i < 22; i++) {
+        const t = i / 22;
+        const pt = trackCurve.getPointAt(t);
+        const col = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.8, 22, 12), colMat);
+        col.position.set(pt.x * 1.35, 11, pt.z * 1.35);
+        const brazier = new THREE.Mesh(new THREE.SphereGeometry(2.2, 12, 12), fireMat);
+        brazier.position.set(pt.x * 1.35, 23, pt.z * 1.35);
+        envGroup.add(col);
+        envGroup.add(brazier);
+      }
+    } else if (currentTheme === 'synthwave') {
+      // 🌴 80s Synthwave Outrun Sunset
+      scene.background.set(0x140024);
+      scene.fog.color.set(0x140024);
+      scene.fog.density = 0.003;
+      dirLight.color.set(0x06b6d4);
+      dirLight.intensity = 2.5;
+      ambientLight.color.set(0xd946ef);
+      ambientLight.intensity = 1.9;
+
+      trackMesh.material.color.set(0x1f0033);
+      groundMesh.material.color.set(0x0b0014);
+      if (railMat) railMat.color.set(0xf43f5e);
+
+      // Giant 80s Wireframe Sun on Horizon
+      const sunGeo = new THREE.SphereGeometry(45, 24, 24);
+      const sunMat = new THREE.MeshBasicMaterial({ color: 0xf43f5e });
+      const sun = new THREE.Mesh(sunGeo, sunMat);
+      sun.position.set(0, 40, -320);
+      envGroup.add(sun);
+
+      // Neon Wireframe Palm Trees
+      const palmTrunkMat = new THREE.MeshBasicMaterial({ color: 0x06b6d4 });
+      const palmFrondMat = new THREE.MeshBasicMaterial({ color: 0xd946ef });
+      for (let p = 0; p < 24; p++) {
+        const t = p / 24;
+        const pt = trackCurve.getPointAt(t);
+        const pGroup = new THREE.Group();
+        const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.9, 18, 6), palmTrunkMat);
+        trunk.position.y = 9;
+        pGroup.add(trunk);
+        for (let f = 0; f < 5; f++) {
+          const frond = new THREE.Mesh(new THREE.BoxGeometry(8, 0.3, 1.8), palmFrondMat);
+          frond.position.set(Math.cos(f) * 3.5, 18, Math.sin(f) * 3.5);
+          frond.rotation.z = 0.35;
+          pGroup.add(frond);
+        }
+        pGroup.position.set(pt.x * 1.38, 0, pt.z * 1.38);
+        envGroup.add(pGroup);
+      }
+    } else if (currentTheme === 'circuit') {
+      // 🏁 Night F1 Circuit
+      scene.background.set(0x0b1329);
+      scene.fog.color.set(0x0b1329);
+      scene.fog.density = 0.003;
+      dirLight.color.set(0xffffff);
+      ambientLight.color.set(0xe2e8f0);
+
+      trackMesh.material.color.set(0x1e293b);
+      groundMesh.material.color.set(0x15803d);
+      if (railMat) railMat.color.set(0xef4444);
+
+      // Stadium floodlights & Grandstands
+      const poleMat = new THREE.MeshStandardMaterial({ color: 0x64748b, metalness: 0.7 });
+      const lampMat = new THREE.MeshBasicMaterial({ color: 0xf8fafc });
+      for (let i = 0; i < 18; i++) {
+        const t = i / 18;
+        const pt = trackCurve.getPointAt(t);
+        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.8, 32), poleMat);
+        pole.position.set(pt.x * 1.35, 16, pt.z * 1.35);
+        const lamp = new THREE.Mesh(new THREE.BoxGeometry(6, 3, 3), lampMat);
+        lamp.position.set(pt.x * 1.35, 32, pt.z * 1.35);
+        envGroup.add(pole);
+        envGroup.add(lamp);
+      }
+
+      const standMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.7 });
+      for (let s = 0; s < 4; s++) {
+        const stand = new THREE.Mesh(new THREE.BoxGeometry(45, 14, 12), standMat);
+        const t = (s * 0.25 + 0.1) % 1.0;
+        const pt = trackCurve.getPointAt(t);
+        stand.position.set(pt.x * 1.45, 7, pt.z * 1.45);
+        stand.lookAt(pt);
+        envGroup.add(stand);
+      }
+    } else if (currentTheme === 'desert') {
+      // 🏜️ Grand Canyon Desert
+      scene.background.set(0x382312);
+      scene.fog.color.set(0x382312);
+      scene.fog.density = 0.003;
+      dirLight.color.set(0xffeedd);
+      ambientLight.color.set(0xffe0bb);
+
+      trackMesh.material.color.set(0x5c3619);
+      groundMesh.material.color.set(0x9a4b18);
+      if (railMat) railMat.color.set(0xfbbf24);
+
+      // Red canyon rock boulders
+      const rockMat = new THREE.MeshStandardMaterial({ color: 0xb45309, roughness: 0.9 });
+      for (let i = 0; i < 45; i++) {
+        const rad = 140 + Math.random() * 110;
+        const angle = Math.random() * Math.PI * 2;
+        const h = 25 + Math.random() * 55;
+        const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(14 + Math.random() * 14, 1), rockMat);
+        rock.scale.set(1, h / 15, 1);
+        rock.position.set(Math.cos(angle) * rad, h / 2 - 2, Math.sin(angle) * rad);
+        envGroup.add(rock);
+      }
+
+      // Giant Saguaro Cacti
+      const cactusMat = new THREE.MeshStandardMaterial({ color: 0x15803d, roughness: 0.8 });
+      for (let i = 0; i < 20; i++) {
+        const rad = 130 + Math.random() * 80;
+        const angle = Math.random() * Math.PI * 2;
+        const cGroup = new THREE.Group();
+        const trunk = new THREE.Mesh(new THREE.CylinderGeometry(1, 1.2, 14, 8), cactusMat);
+        trunk.position.y = 7;
+        cGroup.add(trunk);
+        const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 6, 6), cactusMat);
+        arm.position.set(2.2, 8, 0);
+        cGroup.add(arm);
+        cGroup.position.set(Math.cos(angle) * rad, 0, Math.sin(angle) * rad);
+        envGroup.add(cGroup);
+      }
     } else if (currentTheme === 'arctic') {
+      // ❄️ Arctic Frost
       scene.background.set(0x0c1e33);
       scene.fog.color.set(0x0c1e33);
       scene.fog.density = 0.003;
@@ -601,7 +935,7 @@
       groundMesh.material.color.set(0xf8fafc);
       if (railMat) railMat.color.set(0x38bdf8);
 
-      // 1. Crystal Glaciers & Icebergs
+      // Crystal Glaciers & Icebergs
       const iceMat = new THREE.MeshStandardMaterial({
         color: 0xbae6fd,
         roughness: 0.15,
@@ -609,103 +943,20 @@
         transparent: true,
         opacity: 0.9,
       });
-      for (let i = 0; i < 30; i++) {
-        const rad = 105 + Math.random() * 95;
+      for (let i = 0; i < 40; i++) {
+        const rad = 140 + Math.random() * 110;
         const angle = Math.random() * Math.PI * 2;
-        const h = 18 + Math.random() * 45;
-        const r = 8 + Math.random() * 12;
+        const h = 22 + Math.random() * 55;
+        const r = 10 + Math.random() * 14;
         const iceberg = new THREE.Mesh(new THREE.ConeGeometry(r, h, 6), iceMat);
         iceberg.position.set(Math.cos(angle) * rad, h / 2 - 1, Math.sin(angle) * rad);
-        iceberg.rotation.y = Math.random() * Math.PI;
         envGroup.add(iceberg);
       }
-
-      // 2. Polar Research Station Outpost
-      const outpostMat = new THREE.MeshStandardMaterial({ color: 0xef4444, metalness: 0.5 });
-      const hut = new THREE.Mesh(new THREE.BoxGeometry(10, 5, 8), outpostMat);
-      hut.position.set(-50, 2.5, 40);
-      const hutRadar = new THREE.Mesh(new THREE.SphereGeometry(3, 12, 12), new THREE.MeshBasicMaterial({ color: 0xffffff }));
-      hutRadar.position.set(-50, 6.5, 40);
-      envGroup.add(hut);
-      envGroup.add(hutRadar);
-    } else if (currentTheme === 'desert') {
-      scene.background.set(0x382312);
-      scene.fog.color.set(0x382312);
-      scene.fog.density = 0.0035;
-      dirLight.color.set(0xffeedd);
-      ambientLight.color.set(0xffe0bb);
-
-      trackMesh.material.color.set(0x5c3619);
-      groundMesh.material.color.set(0x9a4b18);
-      if (railMat) railMat.color.set(0xfbbf24);
-
-      // Red canyon rock boulders
-      const rockMat = new THREE.MeshStandardMaterial({ color: 0xb45309, roughness: 0.9 });
-      for (let i = 0; i < 35; i++) {
-        const rad = 110 + Math.random() * 80;
-        const angle = Math.random() * Math.PI * 2;
-        const h = 20 + Math.random() * 45;
-        const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(12 + Math.random() * 12, 1), rockMat);
-        rock.scale.set(1, h / 15, 1);
-        rock.position.set(Math.cos(angle) * rad, h / 2 - 2, Math.sin(angle) * rad);
-        envGroup.add(rock);
-      }
-
-      // Giant Saguaro Cacti
-      const cactusMat = new THREE.MeshStandardMaterial({ color: 0x15803d, roughness: 0.8 });
-      for (let i = 0; i < 16; i++) {
-        const rad = 95 + Math.random() * 60;
-        const angle = Math.random() * Math.PI * 2;
-        const cGroup = new THREE.Group();
-        const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 1, 12, 8), cactusMat);
-        trunk.position.y = 6;
-        cGroup.add(trunk);
-        const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 5, 6), cactusMat);
-        arm.position.set(1.8, 7, 0);
-        cGroup.add(arm);
-        cGroup.position.set(Math.cos(angle) * rad, 0, Math.sin(angle) * rad);
-        envGroup.add(cGroup);
-      }
-    } else if (currentTheme === 'circuit') {
-      scene.background.set(0x0f172a);
-      scene.fog.color.set(0x0f172a);
-      scene.fog.density = 0.0035;
-      dirLight.color.set(0xffffff);
-      ambientLight.color.set(0xe2e8f0);
-
-      trackMesh.material.color.set(0x1e293b);
-      groundMesh.material.color.set(0x15803d);
-      if (railMat) railMat.color.set(0xef4444);
-
-      // Stadium floodlights
-      const poleMat = new THREE.MeshStandardMaterial({ color: 0x64748b, metalness: 0.7 });
-      const lampMat = new THREE.MeshBasicMaterial({ color: 0xf8fafc });
-      for (let i = 0; i < 14; i++) {
-        const t = i / 14;
-        const pt = trackCurve.getPointAt(t);
-        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.7, 28), poleMat);
-        pole.position.set(pt.x * 1.35, 14, pt.z * 1.35);
-        const lamp = new THREE.Mesh(new THREE.BoxGeometry(4, 2, 2), lampMat);
-        lamp.position.set(pt.x * 1.35, 28, pt.z * 1.35);
-        envGroup.add(pole);
-        envGroup.add(lamp);
-      }
-
-      // Grandstands
-      const standMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.7 });
-      for (let s = 0; s < 3; s++) {
-        const stand = new THREE.Mesh(new THREE.BoxGeometry(35, 12, 10), standMat);
-        const t = (s * 0.3 + 0.1) % 1.0;
-        const pt = trackCurve.getPointAt(t);
-        stand.position.set(pt.x * 1.45, 6, pt.z * 1.45);
-        stand.lookAt(pt);
-        envGroup.add(stand);
-      }
     } else {
-      // Default Cyberpunk Neon
+      // 🏙️ Cyberpunk Neon 2077
       scene.background.set(0x060913);
       scene.fog.color.set(0x060913);
-      scene.fog.density = 0.0045;
+      scene.fog.density = 0.004;
       dirLight.color.set(0xffffff);
       ambientLight.color.set(0x818cf8);
 
@@ -713,26 +964,32 @@
       groundMesh.material.color.set(0x050811);
       if (railMat) railMat.color.set(0x06b6d4);
 
-      // Cyberpunk Skyscrapers
+      // Cyberpunk Skyscrapers with Neon Trim
       const bldMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.85 });
-      for (let i = 0; i < 45; i++) {
-        const w = 8 + Math.random() * 14;
-        const h = 25 + Math.random() * 70;
-        const d = 8 + Math.random() * 14;
+      const neonTrimMat = new THREE.MeshBasicMaterial({ color: 0xd946ef });
+      for (let i = 0; i < 55; i++) {
+        const w = 10 + Math.random() * 16;
+        const h = 30 + Math.random() * 85;
+        const d = 10 + Math.random() * 16;
         const bld = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), bldMat);
         const angle = Math.random() * Math.PI * 2;
-        const rad = 110 + Math.random() * 100;
+        const rad = 140 + Math.random() * 130;
         bld.position.set(Math.cos(angle) * rad, h / 2, Math.sin(angle) * rad);
+        if (i % 2 === 0) {
+          const trim = new THREE.Mesh(new THREE.BoxGeometry(w + 0.4, 1.2, d + 0.4), neonTrimMat);
+          trim.position.set(0, h / 2 - 2, 0);
+          bld.add(trim);
+        }
         envGroup.add(bld);
       }
 
       // Floating Neon Rings
       const ringMat = new THREE.MeshBasicMaterial({ color: 0xec4899 });
-      for (let r = 0; r < 6; r++) {
-        const t = (r / 6);
+      for (let r = 0; r < 8; r++) {
+        const t = r / 8;
         const pt = trackCurve.getPointAt(t);
-        const neonRing = new THREE.Mesh(new THREE.TorusGeometry(12, 0.4, 8, 24), ringMat);
-        neonRing.position.set(pt.x, 8, pt.z);
+        const neonRing = new THREE.Mesh(new THREE.TorusGeometry(16, 0.5, 8, 24), ringMat);
+        neonRing.position.set(pt.x, 10, pt.z);
         neonRing.lookAt(trackCurve.getPointAt((t + 0.01) % 1.0));
         envGroup.add(neonRing);
       }
@@ -836,11 +1093,11 @@
     avatarPlane.position.set(0, 3.2, 0);
     car.add(avatarPlane);
 
-    // Multi-row starting grid calculation (4 cars per row across 15m track)
-    const cols = 4;
+    // Multi-row starting grid calculation (6 cars per row across 24m track)
+    const cols = 6;
     const col = index % cols;
     const row = Math.floor(index / cols);
-    const startLane = (col - (cols - 1) / 2) * 2.8;
+    const startLane = (col - (cols - 1) / 2) * 3.4;
 
     return {
       mesh: car,
@@ -850,7 +1107,10 @@
       underLight: underLight,
       crownMesh: crownGroup,
       userData: userData,
-      progress: -0.010 * (row + 1),
+      progress: -0.007 * (row + 1),
+      distance: 0,
+      bonusScore: 0,
+      heatScore: 0,
       laneOffset: startLane,
       targetLane: startLane,
       currentSpeed: baseSpeed * (0.95 + Math.random() * 0.1),
@@ -965,14 +1225,121 @@
     return sprite;
   }
 
+  // ==================== CHAMPIONSHIP SEASON LEADERBOARD ====================
+  const CHAMPIONSHIP_KEY = 'racing_3d_championship_' + streamKey;
+
+  function loadChampionship() {
+    try {
+      const raw = localStorage.getItem(CHAMPIONSHIP_KEY);
+      if (raw) return JSON.parse(raw);
+    } catch (_) {}
+    return { heats: 0, racers: {} };
+  }
+
+  let championship = loadChampionship();
+
+  function saveChampionship() {
+    try {
+      localStorage.setItem(CHAMPIONSHIP_KEY, JSON.stringify(championship));
+    } catch (_) {}
+  }
+
+  function resetChampionship() {
+    championship = { heats: 0, racers: {} };
+    saveChampionship();
+    renderLeaderboard();
+  }
+
+  function recordHeatResults(sortedRacers) {
+    championship.heats = (championship.heats || 0) + 1;
+    const POINTS_DIST = [15, 12, 10, 8, 6, 5, 4, 3, 2, 1];
+
+    sortedRacers.forEach((r, rankIdx) => {
+      const u = r.userData;
+      if (!u || !u.name) return;
+      const key = u.id || u.name;
+      if (!championship.racers[key]) {
+        championship.racers[key] = {
+          id: u.id,
+          name: u.name,
+          photoUrl: u.photoUrl || '',
+          points: 0,
+          wins: 0,
+          podiums: 0,
+          heatsRaced: 0,
+          isBot: !u.id || String(u.id).startsWith('bot_'),
+        };
+      }
+      const entry = championship.racers[key];
+      entry.name = u.name;
+      if (u.photoUrl) entry.photoUrl = u.photoUrl;
+      entry.heatsRaced = (entry.heatsRaced || 0) + 1;
+
+      const pts = rankIdx < POINTS_DIST.length ? POINTS_DIST[rankIdx] : 1;
+      entry.points = (entry.points || 0) + pts;
+      if (rankIdx === 0) entry.wins = (entry.wins || 0) + 1;
+      if (rankIdx <= 2) entry.podiums = (entry.podiums || 0) + 1;
+    });
+
+    saveChampionship();
+  }
+
+  function switchLeaderboardTab(tab) {
+    activeTab = tab;
+    if (tab === 'heat') {
+      tabHeatBtn?.classList.add('active');
+      tabSeasonBtn?.classList.remove('active');
+      if (lbHeaderText) lbHeaderText.textContent = 'VỊ TRÍ HIỆN TẠI';
+      if (lbHeatInfo) lbHeatInfo.textContent = `Chặng ${heatNumber}`;
+      if (lbFooter) lbFooter.style.display = 'none';
+    } else {
+      tabSeasonBtn?.classList.add('active');
+      tabHeatBtn?.classList.remove('active');
+      if (lbHeaderText) lbHeaderText.textContent = 'BẢNG ĐIỂM TỔNG SẮP';
+      if (lbHeatInfo) lbHeatInfo.textContent = `Đã đua: ${championship.heats || 0} chặng`;
+      if (lbFooter) lbFooter.style.display = 'flex';
+    }
+    renderLeaderboard();
+  }
+
+  tabHeatBtn?.addEventListener('click', () => switchLeaderboardTab('heat'));
+  tabSeasonBtn?.addEventListener('click', () => switchLeaderboardTab('season'));
+  btnResetChampionship?.addEventListener('click', () => {
+    if (confirm('Bạn có chắc muốn xóa điểm và bắt đầu mùa giải đua mới?')) {
+      resetChampionship();
+    }
+  });
+
+  function updateTimerHUD() {
+    if (hudTimer) {
+      const rem = Math.max(0, Math.ceil(raceTimeRemaining));
+      const m = Math.floor(rem / 60);
+      const s = rem % 60;
+      hudTimer.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+      if (rem <= 10) {
+        hudTimer.style.color = '#ef4444';
+      } else if (rem <= 25) {
+        hudTimer.style.color = '#f59e0b';
+      } else {
+        hudTimer.style.color = '#10b981';
+      }
+    }
+  }
+
   // ==================== HEAT & RACE LIFECYCLE ====================
   function prepareNewHeat() {
     raceFinished = false;
     raceActive = false;
-    currentLap = 1;
+    raceElapsedTime = 0;
+    raceTimeRemaining = raceDuration;
+    updateTimerHUD();
     podiumModal.classList.remove('show');
     hudStatus.textContent = 'SẴN SÀNG';
     hudStatus.className = 'status-ready';
+    if (hudTopDist) hudTopDist.textContent = '0m';
+    if (lbHeatInfo && activeTab === 'heat') {
+      lbHeatInfo.textContent = `Chặng ${heatNumber}`;
+    }
 
     racers.forEach((r) => scene.remove(r.mesh));
     racers = [];
@@ -1030,8 +1397,12 @@
     if (raceActive) return;
     initEngineAudio();
     raceActive = true;
+    raceStartTime = performance.now();
+    raceElapsedTime = 0;
+    raceTimeRemaining = raceDuration;
     hudStatus.textContent = 'ĐANG ĐUA 🏁';
     hudStatus.className = 'status-racing';
+    switchLeaderboardTab('heat');
 
     // 3..2..1..GO buzzer
     playTone(440, 0.2, 'square', 0.25);
@@ -1039,18 +1410,63 @@
     setTimeout(() => playTone(880, 0.5, 'square', 0.35), 800);
   }
 
-  function triggerNitro(racer, intensity = 1.6) {
+  function triggerNitro(racer, intensity = 1.6, bannerLabel = '') {
     if (!racer || racer.finished) return;
-    racer.nitroTimer = 4.0;
-    racer.targetSpeed = baseSpeed * (1.8 + intensity * 0.4);
+    const now = performance.now();
+    // Cooldown 600ms per car to keep responsive yet smooth
+    if (racer.lastNitroTime && now - racer.lastNitroTime < 600) {
+      racer.nitroTimer = Math.min(3.8, racer.nitroTimer + 0.8);
+      return;
+    }
+    racer.lastNitroTime = now;
+    racer.nitroTimer = 3.2;
+
+    const boostMult = Math.min(1.6, 1.25 + intensity * 0.12);
+    racer.targetSpeed = baseSpeed * boostMult;
     playNitroSound();
 
-    nitroUserText.textContent = racer.userData.name;
+    nitroUserText.textContent = bannerLabel ? `${racer.userData.name} ${bannerLabel}` : `${racer.userData.name} ĐÃ KÍCH HOẠT NITRO!`;
     nitroBanner.classList.add('show');
     if (nitroBannerTimer) clearTimeout(nitroBannerTimer);
     nitroBannerTimer = setTimeout(() => {
       nitroBanner.classList.remove('show');
-    }, 2500);
+    }, 2400);
+  }
+
+  // Tương tác trực tiếp: Quà tặng, Bình luận, Chia sẻ, Thả Like
+  function handleRacerInteraction(racer, type, data) {
+    if (!racer || !raceActive || raceFinished) return;
+
+    if (type === 'gift') {
+      const match = (data.message || '').match(/\((\d+)\s*xu\)/i);
+      const coins = match ? parseInt(match[1], 10) : 10;
+      const boostMeters = Math.max(90, coins * 35);
+      racer.bonusScore += boostMeters;
+      racer.progress += boostMeters / 1100;
+      triggerNitro(racer, 2.5, `TẶNG QUÀ 🎁 (+${boostMeters}m)`);
+    } else if (type === 'share') {
+      const boostMeters = 80;
+      racer.bonusScore += boostMeters;
+      racer.progress += boostMeters / 1100;
+      triggerNitro(racer, 1.8, 'CHIA SẺ 📲 (+80m)');
+    } else if (type === 'chat') {
+      const boostMeters = 30;
+      racer.bonusScore += boostMeters;
+      racer.progress += boostMeters / 1100;
+      triggerNitro(racer, 1.4, 'BÌNH LUẬN 💬 (+30m)');
+    } else if (type === 'like') {
+      const boostMeters = 6;
+      racer.bonusScore += boostMeters;
+      racer.progress += boostMeters / 1100;
+    } else if (type === 'join') {
+      const boostMeters = 50;
+      racer.bonusScore += boostMeters;
+      racer.progress += boostMeters / 1100;
+      triggerNitro(racer, 1.6, 'VÀO TRƯỜNG ĐUA ⚡ (+50m)');
+    }
+
+    racer.heatScore = Math.max(0, Math.floor(racer.distance + racer.bonusScore));
+    renderLeaderboard();
   }
 
   function triggerNitroAll() {
@@ -1060,7 +1476,7 @@
   // Update dynamic position & ranking decorations
   function updateCarPosition(racer) {
     const totalProg = Math.max(0, racer.progress);
-    const lapT = totalProg % 1.0;
+    const lapT = ((totalProg % 1.0) + 1.0) % 1.0;
     const point = trackCurve.getPointAt(lapT);
     const tangent = trackCurve.getTangentAt(lapT).normalize();
     const normal = new THREE.Vector3(0, 1, 0);
@@ -1116,7 +1532,8 @@
     hudStatus.textContent = 'KẾT THÚC';
     playWinFanfare();
 
-    const sorted = [...racers].sort((a, b) => b.progress - a.progress);
+    // Sắp xếp theo Quãng đường / Điểm chặng này cao nhất
+    const sorted = [...racers].sort((a, b) => b.heatScore - a.heatScore);
     const p1 = sorted[0];
     const p2 = sorted[1];
     const p3 = sorted[2];
@@ -1124,17 +1541,29 @@
     if (p1) {
       p1Name.textContent = p1.userData.name;
       p1Avatar.src = p1.userData.photoUrl || '';
+      if (p1Pts) p1Pts.textContent = `${p1.heatScore.toLocaleString()}m (+15đ)`;
     }
     if (p2) {
       p2Name.textContent = p2.userData.name;
       p2Avatar.src = p2.userData.photoUrl || '';
+      if (p2Pts) p2Pts.textContent = `${p2.heatScore.toLocaleString()}m (+12đ)`;
     }
     if (p3) {
       p3Name.textContent = p3.userData.name;
       p3Avatar.src = p3.userData.photoUrl || '';
+      if (p3Pts) p3Pts.textContent = `${p3.heatScore.toLocaleString()}m (+10đ)`;
     }
 
+    // Ghi điểm tích lũy vào Bảng Xếp Hạng Chung (Championship)
+    recordHeatResults(sorted);
+    heatNumber++;
+
     podiumModal.classList.add('show');
+
+    // Tự động chuyển qua tab Tổng Sắp để vinh danh thứ hạng mùa giải
+    setTimeout(() => {
+      switchLeaderboardTab('season');
+    }, 1200);
 
     sorted.forEach((r) => {
       if (r.userData.id && !String(r.userData.id).startsWith('bot_')) {
@@ -1142,7 +1571,6 @@
       }
     });
 
-    // Also tell server to clear queue completely after heat
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({
         type: 'CLEAR_QUEUE',
@@ -1150,7 +1578,7 @@
       }));
     }
 
-    let sec = 6;
+    let sec = 7;
     const cd = setInterval(() => {
       sec--;
       podiumTimer.innerHTML = `Chặng tiếp theo sẽ bắt đầu sau: <b>${sec}s</b>`;
@@ -1172,12 +1600,23 @@
   }
 
   function updateHUD() {
-    hudLaps.textContent = `${Math.min(currentLap, maxLaps)} / ${maxLaps}`;
-    hudQueue.textContent = `${racers.length || racersPerHeat} Xe`;
+    if (hudQueue) hudQueue.textContent = `${racers.length || racersPerHeat} Xe`;
+    updateTimerHUD();
   }
 
   function renderLeaderboard() {
-    const sorted = [...racers].sort((a, b) => b.progress - a.progress);
+    if (activeTab === 'season') {
+      renderChampionshipLeaderboard();
+    } else {
+      renderHeatLeaderboard();
+    }
+  }
+
+  function renderHeatLeaderboard() {
+    const sorted = [...racers].sort((a, b) => b.heatScore - a.heatScore);
+    if (sorted[0] && hudTopDist) {
+      hudTopDist.textContent = `${sorted[0].heatScore.toLocaleString()}m`;
+    }
     racersListEl.innerHTML = sorted.map((r, i) => {
       r.currentRank = i + 1;
       const isLead = i === 0;
@@ -1188,7 +1627,34 @@
           <span class="racer-pos">${rankBadge}</span>
           <img class="racer-img" src="${r.userData.photoUrl || '/api/proxy-img?url='}" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' viewBox=\\'0 0 32 32\\'><circle cx=\\'16\\' cy=\\'16\\' r=\\'16\\' fill=\\'%23334155\\'/></svg>'" alt="" />
           <span class="racer-name">${r.userData.name}</span>
+          <span class="racer-dist-tag">${r.heatScore.toLocaleString()}m</span>
           <span class="racer-nitro-tag">⚡ NITRO</span>
+        </div>
+      `;
+    }).join('');
+  }
+
+  function renderChampionshipLeaderboard() {
+    const entries = Object.values(championship.racers || {});
+    entries.sort((a, b) => {
+      if (b.points !== a.points) return b.points - a.points;
+      return (b.wins || 0) - (a.wins || 0);
+    });
+
+    if (entries.length === 0) {
+      racersListEl.innerHTML = '<div class="racer-empty">Chưa có kết quả chặng đua nào.<br/>Hãy hoàn thành 1 chặng để tích điểm!</div>';
+      return;
+    }
+
+    racersListEl.innerHTML = entries.slice(0, 40).map((r, i) => {
+      const isLead = i === 0;
+      const rankBadge = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `#${i + 1}`;
+      return `
+        <div class="racer-row ${isLead ? 'rank-1' : ''}">
+          <span class="racer-pos">${rankBadge}</span>
+          <img class="racer-img" src="${r.photoUrl || '/api/proxy-img?url='}" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' viewBox=\\'0 0 32 32\\'><circle cx=\\'16\\' cy=\\'16\\' r=\\'16\\' fill=\\'%23334155\\'/></svg>'" alt="" />
+          <span class="racer-name">${r.name}${r.wins > 0 ? `<span class="racer-wins">🥇${r.wins}</span>` : ''}</span>
+          <span class="racer-pts ${isLead ? 'pts-gold' : ''}">${r.points}đ</span>
         </div>
       `;
     }).join('');
@@ -1201,19 +1667,19 @@
     const carPos = leadRacer.mesh.position;
 
     if (cameraMode === 'chase') {
-      const targetCamPos = carPos.clone().add(new THREE.Vector3(0, 9, 16));
+      const targetCamPos = carPos.clone().add(new THREE.Vector3(0, 11, 20));
       camera.position.lerp(targetCamPos, 0.08);
-      camera.lookAt(carPos.clone().add(new THREE.Vector3(0, 1.5, -4)));
+      camera.lookAt(carPos.clone().add(new THREE.Vector3(0, 1.8, -4)));
     } else if (cameraMode === 'fly') {
-      camera.position.set(0, 85, 95);
+      camera.position.set(0, 175, 195);
       camera.lookAt(0, 0, 0);
     } else if (cameraMode === 'side') {
-      camera.position.set(50, 16, 30);
+      camera.position.set(110, 26, 70);
       camera.lookAt(carPos);
     } else if (cameraMode === 'cockpit') {
-      const hoodPos = carPos.clone().add(new THREE.Vector3(0, 1.8, -1.2));
+      const hoodPos = carPos.clone().add(new THREE.Vector3(0, 2.0, -1.4));
       camera.position.copy(hoodPos);
-      camera.lookAt(carPos.clone().add(new THREE.Vector3(0, 1.5, -12)));
+      camera.lookAt(carPos.clone().add(new THREE.Vector3(0, 1.6, -14)));
     }
   }
 
@@ -1253,6 +1719,9 @@
     lastTime = now;
 
     if (raceActive && !raceFinished) {
+      raceElapsedTime = (now - raceStartTime) / 1000;
+      updateTimerHUD();
+
       let maxProg = 0;
 
       // 1. Physics update for each car
@@ -1281,12 +1750,12 @@
           }
         });
 
-        // 3. Lane switching AI
+        // 3. Lane switching AI (Up to 9 racing lanes on 24m track)
         racer.laneSwitchTimer -= dt;
         if (racer.laneSwitchTimer <= 0) {
           racer.laneSwitchTimer = 2.0 + Math.random() * 3.5;
-          const randomLane = (Math.floor(Math.random() * 5) - 2) * 1.6;
-          racer.targetLane = Math.max(-5.5, Math.min(5.5, randomLane));
+          const randomLane = (Math.floor(Math.random() * 9) - 4) * 2.2;
+          racer.targetLane = Math.max(-9.2, Math.min(9.2, randomLane));
         }
 
         racer.laneOffset += (racer.targetLane - racer.laneOffset) * dt * 2.5;
@@ -1294,14 +1763,14 @@
         // Smooth speed acceleration/deceleration
         racer.currentSpeed += (racer.targetSpeed - racer.currentSpeed) * dt * 3.0;
 
-        // Progress increment around track spline
+        // Progress increment around track spline (chạy vòng liên tục không giới hạn vòng)
         const deltaProg = racer.currentSpeed * dt * 0.038;
         racer.progress += deltaProg;
-        updateCarPosition(racer);
+        // Chu vi đường đua quy đổi ~1,100m mỗi vòng
+        racer.distance += deltaProg * 1100;
+        racer.heatScore = Math.max(0, Math.floor(racer.distance + racer.bonusScore));
 
-        if (racer.progress > maxProg) {
-          maxProg = racer.progress;
-        }
+        updateCarPosition(racer);
       });
 
       // 4. Lateral Bumping & Collision physics between cars
@@ -1327,17 +1796,13 @@
       }
 
       // Update engine audio pitch with leader
-      updateEngineSound(maxProg * 10);
-
-      // Check lap progression
-      const leadLap = Math.floor(maxProg) + 1;
-      if (leadLap !== currentLap && leadLap <= maxLaps) {
-        currentLap = leadLap;
-        playTone(660, 0.25, 'triangle', 0.2);
-        updateHUD();
+      const leader = racers.reduce((best, r) => (r.heatScore > best.heatScore ? r : best), racers[0]);
+      if (leader) {
+        updateEngineSound(leader.currentSpeed * 10);
       }
 
-      if (maxProg >= maxLaps) {
+      // KẾT THÚC CHẶNG: Hết thời gian đếm ngược (Ai đi xa nhất sẽ thắng)
+      if (raceTimeRemaining <= 0) {
         onRaceFinished();
       }
 
@@ -1382,12 +1847,12 @@
 
           const activeRacer = racers.find((r) => r.userData.id === msg.user.id || r.userData.name === msg.user.name);
           if (activeRacer) {
-            triggerNitro(activeRacer, 2.2);
+            handleRacerInteraction(activeRacer, 'join', msg.user);
           }
         } else if (msg.type === 'ADD_LOG' && msg.log) {
-          const activeRacer = racers.find((r) => r.userData.name === msg.log.userName);
+          const activeRacer = racers.find((r) => r.userData.name === msg.log.userName || (r.userData.id && r.userData.id === msg.log.userId));
           if (activeRacer) {
-            triggerNitro(activeRacer, msg.log.type === 'gift' ? 2.5 : 1.3);
+            handleRacerInteraction(activeRacer, msg.log.type, msg.log);
           }
         } else if (msg.type === 'ACTION') {
           if (msg.action === 'start_race') {
@@ -1396,6 +1861,8 @@
             triggerNitroAll();
           } else if (msg.action === 'reset_race') {
             prepareNewHeat();
+          } else if (msg.action === 'reset_championship') {
+            resetChampionship();
           } else if (msg.action === 'change_camera' && msg.value) {
             cameraMode = msg.value;
             document.querySelectorAll('.cam-btn').forEach((b) => {
@@ -1414,7 +1881,11 @@
   }
 
   function applySettings(s) {
-    if (s.laps) maxLaps = parseInt(s.laps, 10) || 3;
+    if (s.raceDuration !== undefined) {
+      raceDuration = Math.max(15, parseInt(s.raceDuration, 10) || 60);
+      raceTimeRemaining = raceDuration;
+      updateTimerHUD();
+    }
     if (s.racersPerHeat) racersPerHeat = parseInt(s.racersPerHeat, 10) || 30;
     if (s.speed) baseSpeed = parseFloat(s.speed) || 1.8;
     if (s.trackTheme && s.trackTheme !== currentTheme) {

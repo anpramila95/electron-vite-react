@@ -13,14 +13,15 @@
   ],
   "settingsSchema": [
     {
-      "key": "laps",
-      "label": "Số vòng đua mỗi chặng",
+      "key": "raceDuration",
+      "label": "Thời lượng mỗi chặng đua (Đếm ngược tính ai xa nhất)",
       "type": "buttons",
-      "defaultValue": 3,
+      "defaultValue": 60,
       "options": [
-        { "label": "2 Vòng", "value": 2 },
-        { "label": "3 Vòng", "value": 3 },
-        { "label": "5 Vòng", "value": 5 }
+        { "label": "30 Giây", "value": 30 },
+        { "label": "60 Giây", "value": 60 },
+        { "label": "90 Giây", "value": 90 },
+        { "label": "120 Giây", "value": 120 }
       ]
     },
     {
@@ -54,8 +55,12 @@
         { "label": "🌌 Không Gian & Thiên Hà Vũ Trụ (Galaxy Cosmic)", "value": "galaxy" },
         { "label": "🪐 Sao Hỏa Đỏ & Trạm Không Gian (Mars Red Planet)", "value": "mars" },
         { "label": "🏙️ Thành Phố Cyberpunk Neon 2077", "value": "neon" },
-        { "label": "🏜️ Hẻm Núi Sa Mạc (Grand Canyon)", "value": "desert" },
+        { "label": "🌋 Núi Lửa Dung Nham & Hầm Ngục (Molten Volcano)", "value": "volcano" },
+        { "label": "🌊 Thủy Cung Atlantis Dưới Đáy Biển (Deep Ocean)", "value": "aquatic" },
+        { "label": "🏛️ Đấu Trường La Mã Hoàng Gia (Golden Empire)", "value": "golden_city" },
+        { "label": "🌴 Synthwave Retro Sunset 1980s (Outrun Grid)", "value": "synthwave" },
         { "label": "🏁 Đường Đua F1 Grand Prix Ban Đêm", "value": "circuit" },
+        { "label": "🏜️ Hẻm Núi Sa Mạc (Grand Canyon)", "value": "desert" },
         { "label": "❄️ Vùng Băng Bắc Cực (Arctic Frost)", "value": "arctic" }
       ]
     },
@@ -126,6 +131,14 @@
       "icon": "🔄",
       "variant": "secondary",
       "actionKey": "reset_race",
+      "group": "race_flow"
+    },
+    {
+      "id": "reset_championship",
+      "label": "Làm mới Bảng Xếp Hạng Tổng",
+      "icon": "🏆",
+      "variant": "danger",
+      "actionKey": "reset_championship",
       "group": "race_flow"
     },
     {

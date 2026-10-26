@@ -135,21 +135,51 @@ html, body {
   position: absolute;
   top: 75px;
   left: 20px;
-  width: 230px;
+  width: 245px;
   max-height: calc(100vh - 150px);
-  background: rgba(10, 15, 29, 0.85);
-  backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(10, 15, 29, 0.88);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 12px;
   overflow: hidden;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
   pointer-events: auto;
   display: flex;
   flex-direction: column;
 }
 
-.lbl-header {
+.lb-tabs {
+  display: flex;
   background: rgba(15, 23, 42, 0.95);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.lb-tab-btn {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 8px 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-bottom: 2px solid transparent;
+}
+
+.lb-tab-btn:hover {
+  color: #e2e8f0;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.lb-tab-btn.active {
+  color: #38bdf8;
+  border-bottom-color: #38bdf8;
+  background: rgba(56, 189, 248, 0.08);
+}
+
+.lbl-header {
+  background: rgba(15, 23, 42, 0.7);
   font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.5px;
@@ -159,6 +189,37 @@ html, body {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.lbl-sub {
+  font-size: 9px;
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.lb-footer {
+  padding: 6px 8px;
+  background: rgba(15, 23, 42, 0.9);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  justify-content: center;
+}
+
+.lb-reset-btn {
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: #fca5a5;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.lb-reset-btn:hover {
+  background: rgba(239, 68, 68, 0.3);
+  color: #ffffff;
 }
 
 .racers-list {
@@ -223,11 +284,57 @@ html, body {
   white-space: nowrap;
 }
 
+.racer-dist-tag {
+  font-size: 10px;
+  font-weight: 800;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  padding: 1px 5px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.rank-1 .racer-dist-tag {
+  color: #facc15;
+  background: rgba(250, 204, 21, 0.18);
+  border-color: rgba(250, 204, 21, 0.45);
+}
+
 .racer-nitro-tag {
   font-size: 9px;
   font-weight: 800;
   color: #f59e0b;
   display: none;
+}
+
+.racer-pts {
+  font-size: 10px;
+  font-weight: 800;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.15);
+  padding: 1px 5px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.racer-pts.pts-gold {
+  color: #facc15;
+  background: rgba(250, 204, 21, 0.2);
+}
+
+.racer-wins {
+  font-size: 9px;
+  color: #e2e8f0;
+  margin-left: 2px;
+}
+
+.racer-empty {
+  padding: 18px 8px;
+  text-align: center;
+  font-size: 11px;
+  color: #64748b;
+  font-weight: 600;
 }
 
 .racer-row.is-nitro .racer-nitro-tag {
@@ -435,6 +542,23 @@ html, body {
   align-items: center;
   justify-content: center;
   color: #0f172a;
+}
+
+.step-points {
+  font-size: 10px;
+  font-weight: 800;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.25);
+  border: 1px solid rgba(56, 189, 248, 0.5);
+  padding: 2px 6px;
+  border-radius: 10px;
+  margin-top: 4px;
+}
+
+.step-points.gold {
+  color: #facc15;
+  background: rgba(250, 204, 21, 0.3);
+  border-color: rgba(250, 204, 21, 0.7);
 }
 
 .step-1 .step-block {
