@@ -9,7 +9,7 @@ export interface AIEngineConfig {
   batchInterval: number // giay
   maxBatchSize: number
   ttsEnabled: boolean
-  ttsEngine: 'webspeech' | 'google' | 'openai' | 'elevenlabs' | 'custom_remote'
+  ttsEngine: 'edge' | 'custom_remote' | string
   ttsVoice: string
   ttsSpeed: number
   ttsVolume: number
@@ -20,6 +20,8 @@ export interface AIEngineConfig {
   ttsCustomMethod: 'GET' | 'POST'
   playInApp: boolean
   playInObs: boolean
+  greetingText?: string
+  greetingInterval?: number
   templatePrompts: Record<string, string>
 }
 
@@ -30,12 +32,14 @@ export interface LiveEventItem {
   message: string
   priority: number
   timestamp: number
+  streamKey?: string
+  templateId?: string
 }
 
 export interface SpeakPayload {
   id: string
   text: string
-  engine: 'webspeech' | 'google' | 'openai' | 'elevenlabs' | 'custom_remote'
+  engine: 'edge' | 'custom_remote' | string
   audioUrl: string
   speed: number
   volume: number
@@ -43,7 +47,9 @@ export interface SpeakPayload {
   duckMusic: boolean
   playInApp: boolean
   playInObs: boolean
-  templateId: string
+  streamKey?: string
+  templateId?: string
+  isTest?: boolean
   timestamp: number
 }
 
@@ -106,15 +112,15 @@ Quy tắc:
 
 const DEFAULT_CONFIG: AIEngineConfig = {
   enabled: true,
-  provider: 'openai',
+  provider: 'custom',
   apiKey: '',
   baseUrl: 'https://api.openai.com/v1',
   model: 'gpt-4o-mini',
   batchInterval: 6,
   maxBatchSize: 6,
   ttsEnabled: true,
-  ttsEngine: 'webspeech',
-  ttsVoice: 'vi-VN',
+  ttsEngine: 'edge',
+  ttsVoice: 'vi-VN-HoaiMyNeural',
   ttsSpeed: 1.0,
   ttsVolume: 1.0,
   ttsDuckMusic: true,
@@ -124,6 +130,8 @@ const DEFAULT_CONFIG: AIEngineConfig = {
   ttsCustomMethod: 'POST',
   playInApp: false, // Default to false: let OBS Preview handle TTS & ducking like music
   playInObs: true,
+  greetingText: '',
+  greetingInterval: 0,
   templatePrompts: { ...DEFAULT_TEMPLATE_PROMPTS },
 }
 
@@ -131,17 +139,137 @@ export class LiveAIEngine {
   private config: AIEngineConfig = { ...DEFAULT_CONFIG }
   private pendingEvents: LiveEventItem[] = []
   private timer: NodeJS.Timeout | null = null
+  private greetingTimer: NodeJS.Timeout | null = null
   private isProcessing = false
+  private activeTemplateId = 'fishing_3d'
   private onSpeakCallback?: (payload: SpeakPayload) => void
 
   constructor(onSpeak?: (payload: SpeakPayload) => void) {
     this.onSpeakCallback = onSpeak
     this.loadConfig()
     this.restartLoop()
+    this.restartGreetingLoop()
+  }
+
+  public setActiveTemplate(id: string) {
+    if (id) this.activeTemplateId = id
   }
 
   public getConfig(): AIEngineConfig {
     return { ...this.config }
+  }
+
+  public isAiEnabled(): boolean {
+    return !!this.config.enabled && (Boolean(this.config.apiKey) || this.config.provider === 'ollama')
+  }
+
+  private botCommentsCache: Map<string, string[]> = new Map()
+  private botCommentsFetching: Set<string> = new Set()
+
+  public async getAiBotComment(templateId: string, streamName?: string): Promise<string | null> {
+    if (!this.isAiEnabled()) return null
+
+    const cacheKey = `${templateId}_${streamName || ''}`
+    let list = this.botCommentsCache.get(cacheKey) || []
+
+    if (list.length > 0) {
+      const picked = list.shift()!
+      if (list.length <= 2 && !this.botCommentsFetching.has(cacheKey)) {
+        this.fetchAiBotComments(templateId, streamName).catch(() => {})
+      }
+      return picked
+    }
+
+    await this.fetchAiBotComments(templateId, streamName)
+    list = this.botCommentsCache.get(cacheKey) || []
+    return list.length > 0 ? list.shift()! : null
+  }
+
+  private async fetchAiBotComments(templateId: string, streamName?: string): Promise<void> {
+    const cacheKey = `${templateId}_${streamName || ''}`
+    if (this.botCommentsFetching.has(cacheKey)) return
+    this.botCommentsFetching.add(cacheKey)
+
+    try {
+      const templateDescriptions: Record<string, string> = {
+        racing_3d: 'giải đua xe 3D Grand Prix (khán giả comment cổ vũ xe, xin slot đua, khen xe chạy mượt, hóng về đích)',
+        fishing_3d: 'đấu trường câu cá 3D (khán giả xin cần câu, hóng cá to khổng lồ, khen mặt nước chill, giật cá)',
+        print_booth_3d: 'máy in ảnh avatar 3D (khán giả xin 1 slot in avatar, khen ảnh sắc nét, hóng tới lượt mình)',
+        print_booth_lite: 'máy in ảnh chân dung 3D (khán giả xin slot in, khen nét, thả tim)',
+      }
+
+      const desc = templateDescriptions[templateId] || 'trò chơi tương tác 3D TikTok Live'
+      const prompt = `Bạn là khán giả đang xem livestream TikTok "${streamName || 'Live Tương Tác 3D'}".
+Trò chơi trên livestream là: ${desc}.
+Nhiệm vụ: Hãy tạo đúng 8 bình luận ngắn gọn, tự nhiên, đa dạng của khán giả Việt Nam gửi vào phòng live.
+Yêu cầu:
+- Mỗi bình luận viết trên 1 dòng riêng biệt.
+- Cực kỳ ngắn gọn (dưới 12 từ/câu), ngôn ngữ mạng đời thường (ví dụ: "shop cho em xin slot", "xe xịn quá", "kéo cá to lên nào", "in giúp em với ạ", "haha đỉnh thật").
+- Không đánh số, không gạch đầu dòng, không thêm lời dẫn.`
+
+      let endpoint = (this.config.baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '')
+      if (!endpoint.endsWith('/chat/completions')) {
+        endpoint += '/chat/completions'
+      }
+
+      let model = this.config.model || 'gpt-4o-mini'
+      if (this.config.provider === 'gemini') {
+        if (!this.config.baseUrl || this.config.baseUrl.includes('openai.com')) {
+          endpoint = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'
+        }
+        if (!this.config.model || this.config.model === 'gpt-4o-mini') {
+          model = 'gemini-1.5-flash'
+        }
+      } else if (this.config.provider === 'ollama') {
+        if (!this.config.baseUrl || this.config.baseUrl.includes('openai.com')) {
+          endpoint = 'http://localhost:11434/v1/chat/completions'
+        }
+        if (!this.config.model || this.config.model === 'gpt-4o-mini') {
+          model = 'qwen2.5:3b'
+        }
+      } else if (this.config.provider === 'deepseek') {
+        if (!this.config.baseUrl || this.config.baseUrl.includes('openai.com')) {
+          endpoint = 'https://api.deepseek.com/v1/chat/completions'
+        }
+        if (!this.config.model || this.config.model === 'gpt-4o-mini') {
+          model = 'deepseek-chat'
+        }
+      }
+
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (this.config.apiKey) {
+        headers['Authorization'] = `Bearer ${this.config.apiKey.trim()}`
+      }
+
+      const resp = await fetch(endpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'user', content: prompt }],
+          max_tokens: 300,
+          temperature: 0.85,
+        }),
+      })
+
+      if (resp.ok) {
+        const json: any = await resp.json()
+        const text = json.choices?.[0]?.message?.content || ''
+        const lines = text
+          .split('\n')
+          .map((l: string) => l.replace(/^[-*•\d.)\s]+/, '').trim())
+          .filter((l: string) => l.length > 2 && l.length < 100)
+
+        if (lines.length > 0) {
+          const current = this.botCommentsCache.get(cacheKey) || []
+          this.botCommentsCache.set(cacheKey, [...current, ...lines])
+        }
+      }
+    } catch (e) {
+      console.error('[AI Engine] Failed to fetch bot comments:', e)
+    } finally {
+      this.botCommentsFetching.delete(cacheKey)
+    }
   }
 
   public updateConfig(partial: Partial<AIEngineConfig>) {
@@ -155,6 +283,7 @@ export class LiveAIEngine {
     }
     this.saveConfig()
     this.restartLoop()
+    this.restartGreetingLoop()
   }
 
   private loadConfig() {
@@ -196,12 +325,53 @@ export class LiveAIEngine {
 
     const intervalMs = Math.max(3, this.config.batchInterval || 6) * 1000
     this.timer = setInterval(() => {
-      this.processBatch()
+      this.processBatch(this.activeTemplateId)
     }, intervalMs)
   }
 
+  private restartGreetingLoop() {
+    if (this.greetingTimer) {
+      clearInterval(this.greetingTimer)
+      this.greetingTimer = null
+    }
+
+    const minutes = Number(this.config.greetingInterval) || 0
+    const text = (this.config.greetingText || '').trim()
+
+    if (minutes > 0 && text && this.config.ttsEnabled) {
+      const intervalMs = Math.max(1, minutes) * 60 * 1000
+      this.greetingTimer = setInterval(() => {
+        this.speakGreeting()
+      }, intervalMs)
+    }
+  }
+
+  public speakGreeting() {
+    const text = (this.config.greetingText || '').trim()
+    if (!text || !this.config.ttsEnabled || !this.onSpeakCallback) return
+    const spokenText = this.cleanSpeechText(text)
+    if (!spokenText) return
+
+    const payload: SpeakPayload = {
+      id: `greeting-${Date.now()}`,
+      text: spokenText,
+      engine: this.config.ttsEngine,
+      audioUrl: `/api/tts?text=${encodeURIComponent(spokenText)}&_t=${Date.now()}`,
+      speed: this.config.ttsSpeed || 1.0,
+      volume: this.config.ttsVolume || 1.0,
+      voice: this.config.ttsVoice || 'vi-VN-HoaiMyNeural',
+      duckMusic: this.config.ttsDuckMusic !== false,
+      playInApp: true,
+      playInObs: this.config.playInObs !== false,
+      templateId: this.activeTemplateId,
+      timestamp: Date.now(),
+    }
+    this.onSpeakCallback(payload)
+  }
+
   // Push incoming event from TikTok stream or faker
-  public handleLog(templateId: string, log: DbLogItem) {
+  public handleLog(templateId: string, log: DbLogItem, streamKey?: string) {
+    if (templateId) this.activeTemplateId = templateId
     if (!this.config.enabled && !this.config.ttsEnabled) return
     if (!log || log.type === 'system') return
 
@@ -222,12 +392,14 @@ export class LiveAIEngine {
       message,
       priority,
       timestamp: Date.now(),
+      streamKey: streamKey || 'default',
+      templateId: templateId || this.activeTemplateId,
     })
 
-    // Cap pending buffer to 25 items to prevent memory bloat
-    if (this.pendingEvents.length > 25) {
+    // Cap pending buffer to 50 items to prevent memory bloat
+    if (this.pendingEvents.length > 50) {
       this.pendingEvents.sort((a, b) => b.priority - a.priority)
-      this.pendingEvents = this.pendingEvents.slice(0, 25)
+      this.pendingEvents = this.pendingEvents.slice(0, 50)
     }
   }
 
@@ -238,51 +410,64 @@ export class LiveAIEngine {
 
     this.isProcessing = true
     try {
-      // Sort by priority descending (gifts first, then meaningful chats)
-      this.pendingEvents.sort((a, b) => b.priority - a.priority)
-      const batchSize = Math.max(1, this.config.maxBatchSize || 6)
-      const selectedEvents = this.pendingEvents.splice(0, batchSize)
+      // Group and process events per streamKey so each stream's webview tab gets its own TTS
+      const streamKeys = Array.from(new Set(this.pendingEvents.map((e) => e.streamKey || 'default')))
 
-      if (selectedEvents.length === 0) return
+      for (const key of streamKeys) {
+        const streamEvents = this.pendingEvents.filter((e) => (e.streamKey || 'default') === key)
+        if (streamEvents.length === 0) continue
 
-      let spokenText = ''
-      const prompt =
-        this.config.templatePrompts[activeTemplateId] ||
-        this.config.templatePrompts['default'] ||
-        DEFAULT_TEMPLATE_PROMPTS[activeTemplateId] ||
-        DEFAULT_TEMPLATE_PROMPTS['default']
+        // Sort by priority descending (gifts first, then meaningful chats)
+        streamEvents.sort((a, b) => b.priority - a.priority)
+        const batchSize = Math.max(1, this.config.maxBatchSize || 6)
+        const selectedEvents = streamEvents.slice(0, batchSize)
 
-      const useLLM =
-        this.config.provider !== 'rule_based' &&
-        (Boolean(this.config.apiKey) || this.config.provider === 'ollama')
+        // Remove selected from pendingEvents
+        const selectedIds = new Set(selectedEvents.map((e) => e.id))
+        this.pendingEvents = this.pendingEvents.filter((e) => !selectedIds.has(e.id))
 
-      if (useLLM) {
-        spokenText = await this.callLLM(prompt, selectedEvents)
-      }
+        const targetTemplate = selectedEvents[0]?.templateId || activeTemplateId || this.activeTemplateId
+        let spokenText = ''
+        const prompt =
+          this.config.templatePrompts[targetTemplate] ||
+          this.config.templatePrompts['default'] ||
+          DEFAULT_TEMPLATE_PROMPTS[targetTemplate] ||
+          DEFAULT_TEMPLATE_PROMPTS['default']
 
-      // If LLM returned empty, failed, or rule-based selected: use smart rule-based generator
-      if (!spokenText) {
-        spokenText = this.generateRuleBased(activeTemplateId, selectedEvents)
-      }
+        const useLLM =
+          this.config.provider !== 'rule_based' &&
+          (Boolean(this.config.apiKey) || this.config.provider === 'ollama')
 
-      spokenText = this.cleanSpeechText(spokenText)
-
-      if (spokenText && this.config.ttsEnabled && this.onSpeakCallback) {
-        const payload: SpeakPayload = {
-          id: `speak-${Date.now()}`,
-          text: spokenText,
-          engine: this.config.ttsEngine,
-          audioUrl: `/api/tts?text=${encodeURIComponent(spokenText)}&_t=${Date.now()}`,
-          speed: this.config.ttsSpeed || 1.0,
-          volume: this.config.ttsVolume || 1.0,
-          voice: this.config.ttsVoice || 'vi-VN',
-          duckMusic: this.config.ttsDuckMusic !== false,
-          playInApp: this.config.playInApp === true,
-          playInObs: this.config.playInObs !== false,
-          templateId: activeTemplateId,
-          timestamp: Date.now(),
+        if (useLLM) {
+          spokenText = await this.callLLM(prompt, selectedEvents)
         }
-        this.onSpeakCallback(payload)
+
+        // If LLM returned empty, failed, or rule-based selected: use smart rule-based generator
+        if (!spokenText) {
+          spokenText = this.generateRuleBased(targetTemplate, selectedEvents)
+        }
+
+        spokenText = this.cleanSpeechText(spokenText)
+
+        if (spokenText && this.config.ttsEnabled && this.onSpeakCallback) {
+          const payload: SpeakPayload = {
+            id: `speak-${Date.now()}`,
+            text: spokenText,
+            engine: this.config.ttsEngine,
+            audioUrl: `/api/tts?text=${encodeURIComponent(spokenText)}&_t=${Date.now()}`,
+            speed: this.config.ttsSpeed || 1.0,
+            volume: this.config.ttsVolume || 1.0,
+            voice: this.config.ttsVoice || 'vi-VN-HoaiMyNeural',
+            duckMusic: this.config.ttsDuckMusic !== false,
+            playInApp: false, // Stream-generated speech plays in the stream's webview tab, not on host app!
+            playInObs: this.config.playInObs !== false,
+            streamKey: key,
+            templateId: targetTemplate,
+            isTest: false,
+            timestamp: Date.now(),
+          }
+          this.onSpeakCallback(payload)
+        }
       }
     } catch (err) {
       console.error('[AI Engine] processBatch error:', err)
@@ -396,7 +581,7 @@ export class LiveAIEngine {
           ]
           return chats[Math.floor(Math.random() * chats.length)]
         }
-        return `Đường đua rực lửa 3D đang chào đón các tay đua, chuẩn bị bứt tốc nào!`
+        return ''
 
       case 'plinko_3d':
         if (gift) {
@@ -405,7 +590,7 @@ export class LiveAIEngine {
         if (chat) {
           return `Bi đang nảy liên hoàn qua dàn đinh neon, liệu điểm rơi sẽ vào ô X10 hay X50 đây bạn ${name} ơi!`
         }
-        return `Cùng đếm nhịp hồi hộp với từng đường bóng rơi may mắn nào anh em!`
+        return ''
 
       case 'fishing_3d':
         if (gift) {
@@ -424,7 +609,7 @@ export class LiveAIEngine {
           ]
           return fishChats[Math.floor(Math.random() * fishChats.length)]
         }
-        return `Mặt nước phẳng lặng bỗng chao đảo, các cần thủ chuẩn bị giật cần nào!`
+        return ''
 
       case 'tram_pha_che':
         if (gift) {
@@ -433,9 +618,10 @@ export class LiveAIEngine {
         if (chat) {
           return `Chào mừng bạn ${name} đã ghé trạm pha chế, cùng ngồi lại lắng nghe bản nhạc chill nhé!`
         }
-        return `Trạm pha chế kính chào quý khách, chúc mọi người có một buổi tối thật an nhiên!`
+        return ''
 
       case 'print_booth_3d':
+      case 'print_booth_lite':
       default:
         if (gift) {
           const boothGifts = [
@@ -453,7 +639,7 @@ export class LiveAIEngine {
           ]
           return boothChats[Math.floor(Math.random() * boothChats.length)]
         }
-        return `Xưởng in 3D công nghệ cao đang hoạt động, chào mừng toàn thể khán giả!`
+        return ''
     }
   }
 
@@ -468,10 +654,12 @@ export class LiveAIEngine {
   }
 
   // Manual test speak button in UI
-  public testSpeak(sampleText?: string, templateId = 'print_booth_3d') {
-    const text = sampleText?.trim() || this.generateRuleBased(templateId, [
-      { id: 'test', type: 'chat', user: 'Khán giả Demo', message: 'Chào AI nhé!', priority: 20, timestamp: Date.now() },
-    ])
+  public testSpeak(sampleText?: string, templateId?: string) {
+    const targetTemplate = templateId || this.activeTemplateId || 'fishing_3d'
+    const greeting = (this.config.greetingText || '').trim()
+    const text = sampleText?.trim() || (greeting ? greeting : this.generateRuleBased(targetTemplate, [
+      { id: 'test', type: 'chat', user: 'Khán giả Demo', message: 'Chào livestream nhé!', priority: 20, timestamp: Date.now() },
+    ])) || 'Xin chào toàn thể anh em đang xem livestream nhé!'
 
     const payload: SpeakPayload = {
       id: `speak-test-${Date.now()}`,
@@ -482,9 +670,10 @@ export class LiveAIEngine {
       volume: this.config.ttsVolume || 1.0,
       voice: this.config.ttsVoice || 'vi-VN',
       duckMusic: this.config.ttsDuckMusic !== false,
-      playInApp: this.config.playInApp === true,
+      playInApp: true,
       playInObs: true,
-      templateId,
+      templateId: targetTemplate,
+      isTest: true,
       timestamp: Date.now(),
     }
 

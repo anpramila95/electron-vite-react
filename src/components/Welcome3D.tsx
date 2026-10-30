@@ -58,10 +58,12 @@ export const Welcome3D: React.FC<Welcome3DProps> = ({ onOpenCreate, onOpenSettin
     const innerMat = new THREE.MeshStandardMaterial({
       color: 0x0ea5e9,
       emissive: 0x0369a1,
-      emissiveIntensity: 0.6,
+      emissiveIntensity: 0.25,
       metalness: 0.8,
-      roughness: 0.2,
+      roughness: 0.3,
       wireframe: false,
+      transparent: true,
+      opacity: 0.35,
     })
     const innerMesh = new THREE.Mesh(innerGeo, innerMat)
     coreGroup.add(innerMesh)
@@ -72,23 +74,23 @@ export const Welcome3D: React.FC<Welcome3DProps> = ({ onOpenCreate, onOpenSettin
       color: 0x38bdf8,
       wireframe: true,
       transparent: true,
-      opacity: 0.35,
+      opacity: 0.18,
     })
     const cageMesh = new THREE.Mesh(cageGeo, cageMat)
     coreGroup.add(cageMesh)
 
     // Gyroscope Neon Rings
-    const ringMat1 = new THREE.MeshBasicMaterial({ color: 0x06b6d4, side: THREE.DoubleSide })
-    const ring1 = new THREE.Mesh(new THREE.TorusGeometry(14, 0.25, 12, 64), ringMat1)
+    const ringMat1 = new THREE.MeshBasicMaterial({ color: 0x06b6d4, side: THREE.DoubleSide, transparent: true, opacity: 0.3 })
+    const ring1 = new THREE.Mesh(new THREE.TorusGeometry(14, 0.2, 12, 64), ringMat1)
     coreGroup.add(ring1)
 
-    const ringMat2 = new THREE.MeshBasicMaterial({ color: 0xf43f5e, side: THREE.DoubleSide })
-    const ring2 = new THREE.Mesh(new THREE.TorusGeometry(17, 0.25, 12, 64), ringMat2)
+    const ringMat2 = new THREE.MeshBasicMaterial({ color: 0xf43f5e, side: THREE.DoubleSide, transparent: true, opacity: 0.3 })
+    const ring2 = new THREE.Mesh(new THREE.TorusGeometry(17, 0.2, 12, 64), ringMat2)
     ring2.rotation.x = Math.PI / 2.5
     coreGroup.add(ring2)
 
-    const ringMat3 = new THREE.MeshBasicMaterial({ color: 0xa855f7, side: THREE.DoubleSide })
-    const ring3 = new THREE.Mesh(new THREE.TorusGeometry(20, 0.2, 12, 64), ringMat3)
+    const ringMat3 = new THREE.MeshBasicMaterial({ color: 0xa855f7, side: THREE.DoubleSide, transparent: true, opacity: 0.3 })
+    const ring3 = new THREE.Mesh(new THREE.TorusGeometry(20, 0.18, 12, 64), ringMat3)
     ring3.rotation.y = Math.PI / 3
     coreGroup.add(ring3)
 
@@ -213,70 +215,71 @@ export const Welcome3D: React.FC<Welcome3DProps> = ({ onOpenCreate, onOpenSettin
 
   const quickTemplates = [
     {
+      id: 'fishing_3d',
+      name: 'Câu Cá Avatar 3D',
+      icon: '🎣',
+      desc: 'Đấu trường săn cá khổng lồ, VIP giật cá rồng thần thoại, BXH thời gian thực',
+      badge: 'Mới Nhất ⭐',
+      color: 'from-sky-500/20 to-blue-500/10 border-sky-500/40 hover:border-sky-400',
+    },
+    {
       id: 'racing_3d',
       name: 'Đua Xe Grand Prix 3D',
       icon: '🏎️',
-      desc: 'Top 30 tay đua đua xe F1, bám camera top 1, nitro rực lửa, 6 map thiên hà / sao hỏa',
-      badge: 'Cực Hot',
-      color: 'from-amber-500/20 to-orange-500/10 border-amber-500/30 hover:border-amber-400',
+      desc: 'Top 30 tay đua F1 gắn avatar thật, nitro rực lửa khi tặng quà, camera bám top 1',
+      badge: 'Cực Hot 🔥',
+      color: 'from-amber-500/20 to-orange-500/10 border-amber-500/40 hover:border-amber-400',
     },
     {
       id: 'print_booth_3d',
       name: 'Máy In Avatar 3D',
       icon: '🖨️',
-      desc: 'Máy in 3D cơ khí tự động gắp và in ảnh avatar TikTok của khán giả theo hàng chờ',
-      badge: 'Thịnh Hành',
-      color: 'from-cyan-500/20 to-blue-500/10 border-cyan-500/30 hover:border-cyan-400',
+      desc: 'Cánh tay robot in 3D cơ khí tự động gắp và in ảnh avatar TikTok theo hàng chờ',
+      badge: 'Thịnh Hành 💎',
+      color: 'from-cyan-500/20 to-blue-500/10 border-cyan-500/40 hover:border-cyan-400',
     },
     {
-      id: 'plinko_3d',
-      name: 'Thả Bi Plinko 3D',
-      icon: '⚪',
-      desc: 'Bàn thả bi vật lý nảy qua dàn đinh neon rớt vào các ô x10, x50, Jackpot nổ hũ',
-      badge: 'Vật Lý 3D',
-      color: 'from-emerald-500/20 to-teal-500/10 border-emerald-500/30 hover:border-emerald-400',
-    },
-    {
-      id: 'tram_pha_che',
-      name: 'Trạm Pha Chế 3D',
-      icon: '🍹',
-      desc: 'Mô phỏng pha chế sinh tố, cà phê, trà sữa tương tác 3D theo từng lượt tặng quà',
-      badge: 'Mới Lạ',
-      color: 'from-purple-500/20 to-pink-500/10 border-purple-500/30 hover:border-purple-400',
+      id: 'print_booth_lite',
+      name: 'Máy In Avatar Lite',
+      icon: '⚡',
+      desc: 'Bản máy in tối ưu hiệu năng nhẹ mượt, khung thẻ VIP hiện đại, tốc độ in cực nhanh',
+      badge: 'Siêu Mượt 🚀',
+      color: 'from-purple-500/20 to-pink-500/10 border-purple-500/40 hover:border-purple-400',
     },
   ]
 
   return (
-    <div ref={containerRef} className='relative flex-1 w-full h-full overflow-hidden bg-slate-950 select-none'>
+    <div ref={containerRef} className='relative flex-1 w-full h-full overflow-y-auto overflow-x-hidden bg-slate-950 select-none flex items-center justify-center p-4 sm:p-6'>
       {/* 3D WebGL Background Canvas */}
       <canvas ref={canvasRef} className='absolute inset-0 w-full h-full pointer-events-none' />
 
-      {/* Radial Gradient overlay to ensure text contrast */}
-      <div className='absolute inset-0 bg-radial from-transparent via-slate-950/40 to-slate-950/90 pointer-events-none' />
+      {/* Dark Vignette & Backdrop Overlay for maximum text contrast */}
+      <div className='absolute inset-0 bg-slate-950/75 backdrop-blur-[2px] pointer-events-none' />
+      <div className='absolute inset-0 bg-radial from-slate-950/30 via-slate-950/75 to-slate-950 pointer-events-none' />
 
-      {/* Main Foreground Content */}
-      <div className='relative z-10 flex flex-col items-center justify-center h-full max-w-5xl mx-auto px-6 py-8 text-center'>
+      {/* Main Foreground Card with Glassmorphism */}
+      <div className='relative z-10 w-full max-w-4xl mx-auto rounded-3xl bg-slate-900/85 backdrop-blur-xl border border-slate-700/60 p-6 sm:p-8 shadow-2xl shadow-black/80 text-center flex flex-col items-center my-auto'>
         {/* Glow pill */}
-        <div className='inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-cyan-950/80 border border-cyan-500/40 text-cyan-300 text-xs font-bold uppercase tracking-wider shadow-lg shadow-cyan-950/50 mb-5 animate-pulse'>
-          <span className='w-2 h-2 rounded-full bg-cyan-400' />
+        <div className='inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-cyan-950/90 border border-cyan-500/50 text-cyan-300 text-xs font-bold uppercase tracking-wider shadow-lg shadow-cyan-950/50 mb-4'>
+          <span className='w-2 h-2 rounded-full bg-cyan-400 animate-ping' />
           TIKTOK LIVE MULTI-TEMPLATES 3D ENGINE
         </div>
 
         {/* Hero Title */}
-        <h1 className='text-3xl sm:text-4xl font-extrabold text-white tracking-tight leading-tight max-w-2xl'>
-          Chào Mừng Bạn Đến Với <span className='text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-sky-300 to-pink-500'>Hệ Thống Live Stream 3D</span>
+        <h1 className='text-2xl sm:text-3xl lg:text-4xl font-black text-white tracking-tight leading-tight max-w-2xl drop-shadow-md'>
+          Chào Mừng Bạn Đến Với <span className='text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-sky-300 to-pink-400'>Hệ Thống Live Stream 3D</span>
         </h1>
 
         {/* Subtitle */}
-        <p className='mt-3 text-sm sm:text-base text-slate-300 max-w-xl leading-relaxed'>
+        <p className='mt-2.5 text-sm sm:text-base text-slate-200 max-w-xl leading-relaxed font-normal'>
           Hiện tại chưa có phiên Live nào được lưu. Hãy khởi tạo phiên Live Stream đầu tiên để kết nối với TikTok Live và OBS Browser Source!
         </p>
 
-        {/* Primary CTA Button */}
+        {/* Primary CTA Buttons */}
         <div className='mt-6 flex flex-wrap items-center justify-center gap-3'>
           <button
             onClick={() => onOpenCreate()}
-            className='cursor-pointer group relative inline-flex items-center gap-2.5 px-6 py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-bold text-sm shadow-xl shadow-cyan-500/25 hover:shadow-cyan-500/40 hover:scale-105 active:scale-95 transition-all duration-200'
+            className='cursor-pointer group relative inline-flex items-center gap-2.5 px-6 py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-bold text-sm shadow-xl shadow-cyan-500/30 hover:shadow-cyan-500/50 hover:scale-105 active:scale-95 transition-all duration-200'
           >
             <span className='text-lg group-hover:rotate-90 transition-transform duration-200'>＋</span>
             <span>Tạo Phiên Live Đầu Tiên</span>
@@ -285,7 +288,7 @@ export const Welcome3D: React.FC<Welcome3DProps> = ({ onOpenCreate, onOpenSettin
           {onOpenSettings && (
             <button
               onClick={onOpenSettings}
-              className='cursor-pointer inline-flex items-center gap-2 px-4 py-3 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-slate-700/80 text-slate-300 font-semibold text-xs transition'
+              className='cursor-pointer inline-flex items-center gap-2 px-4 py-3 rounded-xl bg-slate-800/90 hover:bg-slate-700 border border-slate-600/80 text-slate-200 font-semibold text-xs shadow-md transition'
             >
               <span>⚙️</span>
               <span>Cài Đặt Proxy & EulerStream</span>
@@ -294,9 +297,9 @@ export const Welcome3D: React.FC<Welcome3DProps> = ({ onOpenCreate, onOpenSettin
         </div>
 
         {/* Quick-Start Template Grid */}
-        <div className='mt-10 w-full'>
+        <div className='mt-8 w-full'>
           <div className='flex items-center justify-between mb-3 px-1'>
-            <span className='text-xs font-bold text-slate-400 uppercase tracking-wider'>
+            <span className='text-xs font-bold text-slate-300 uppercase tracking-wider'>
               Hoặc chọn nhanh một mẫu Template 3D bên dưới:
             </span>
           </div>
@@ -306,21 +309,21 @@ export const Welcome3D: React.FC<Welcome3DProps> = ({ onOpenCreate, onOpenSettin
               <div
                 key={t.id}
                 onClick={() => onOpenCreate(t.id)}
-                className={`cursor-pointer group relative rounded-xl border bg-gradient-to-b ${t.color} bg-slate-900/60 p-4 backdrop-blur-sm transition-all duration-200 hover:-translate-y-1 hover:shadow-xl`}
+                className={`cursor-pointer group relative rounded-2xl border bg-gradient-to-b ${t.color} bg-slate-950/80 p-4 backdrop-blur-md transition-all duration-200 hover:-translate-y-1 hover:shadow-xl hover:border-cyan-400`}
               >
                 <div className='flex items-center justify-between mb-2'>
                   <span className='text-2xl group-hover:scale-110 transition-transform'>{t.icon}</span>
-                  <span className='text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-800/80 text-slate-300 border border-slate-700/60'>
+                  <span className='text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-800 text-cyan-200 border border-slate-600/80'>
                     {t.badge}
                   </span>
                 </div>
                 <h3 className='text-sm font-bold text-white group-hover:text-cyan-300 transition-colors'>
                   {t.name}
                 </h3>
-                <p className='mt-1 text-[11px] text-slate-400 line-clamp-2 leading-relaxed'>
+                <p className='mt-1 text-xs text-slate-300 line-clamp-2 leading-relaxed font-normal'>
                   {t.desc}
                 </p>
-                <div className='mt-3 flex items-center gap-1 text-[11px] font-bold text-cyan-400 group-hover:translate-x-1 transition-transform'>
+                <div className='mt-3 flex items-center gap-1.5 text-xs font-bold text-cyan-400 group-hover:translate-x-1 transition-transform'>
                   <span>Khởi tạo ngay</span>
                   <span>→</span>
                 </div>

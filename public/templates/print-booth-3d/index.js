@@ -3,6 +3,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 
 /* ==================== TIEN ICH ==================== */
+const sessionStartTime = Date.now();
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const easeInOut = (t) =>
   t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
@@ -3587,6 +3588,13 @@ function endFlow() {
   active.mesh.visible = true;
 
   queued = finishedSheet;
+
+  // Chống tràn RAM 24/7: Nếu đã in liên tục hơn 2 tiếng, tự động reload OBS Browser để giải phóng 100% RAM GPU/V8
+  if (Date.now() - sessionStartTime > 2 * 60 * 60 * 1000) {
+    console.log('[Memory] Đã chạy hơn 2 tiếng. Tự động reload để dọn sạch RAM...');
+    location.reload();
+    return;
+  }
 
   state.batch++;
   buildBatch(active, state.batch);

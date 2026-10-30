@@ -37,6 +37,10 @@
           <span>TỔNG CÁ CÂU</span>
           <b id="hud-total-fish" style="color: #fbbf24;">0 Con</b>
         </div>
+        <div class="pill">
+          <span>HIỆP ĐẤU</span>
+          <b id="hud-round-timer" style="color: #f43f5e;">60s</b>
+        </div>
         <button id="btn-sound-toggle" class="pill pill-btn" title="Bật/Tắt âm thanh">
           <span>ÂM THANH</span>
           <b id="hud-sound-text">🔊 BẬT</b>
@@ -105,6 +109,48 @@
       <button class="cam-btn cam-close-btn" id="btn-hide-cam" title="Ẩn thanh camera">✕</button>
     </div>
     <button class="cam-restore-btn" id="btn-show-cam" title="Hiện thanh camera" style="display: none;">🎥</button>
+
+    <!-- Winner Podium Modal (Vinh danh Vua Câu Cá & Tự Reset Round) -->
+    <div class="podium-modal" id="podium-modal">
+      <div class="podium-content">
+        <div class="trophy-icon">🏆</div>
+        <h2 id="winner-title">TỔNG KẾT VUA CÂU CÁ!</h2>
+        <div class="podium-grid">
+          <div class="podium-step step-2">
+            <div class="podium-avatar-wrap">
+              <img id="p2-avatar" src="" alt="" />
+              <span class="step-medal">🥈</span>
+            </div>
+            <div class="step-name" id="p2-name">---</div>
+            <div class="step-block" style="background: linear-gradient(180deg, #94a3b8, #64748b); height: 80px;">TOP 2</div>
+            <div class="step-points" id="p2-pts">0 KG</div>
+          </div>
+
+          <div class="podium-step step-1">
+            <div class="podium-avatar-wrap crown-glow">
+              <img id="p1-avatar" src="" alt="" />
+              <span class="step-medal">🥇</span>
+            </div>
+            <div class="step-name" id="p1-name">---</div>
+            <div class="step-block" style="background: linear-gradient(180deg, #facc15, #eab308); height: 115px;">QUÁN QUÂN</div>
+            <div class="step-points gold" id="p1-pts">0 KG</div>
+          </div>
+
+          <div class="podium-step step-3">
+            <div class="podium-avatar-wrap">
+              <img id="p3-avatar" src="" alt="" />
+              <span class="step-medal">🥉</span>
+            </div>
+            <div class="step-name" id="p3-name">---</div>
+            <div class="step-block" style="background: linear-gradient(180deg, #b45309, #78350f); height: 60px; color: #fff;">TOP 3</div>
+            <div class="step-points" id="p3-pts">0 KG</div>
+          </div>
+        </div>
+        <div class="podium-countdown" id="podium-next-timer" style="margin-top: 18px; font-size: 13px; color: #94a3b8;">
+          Hiệp tiếp theo sẽ bắt đầu sau: <b>10s</b>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Three.js local with CDN fallback -->

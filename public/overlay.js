@@ -621,6 +621,16 @@
           currentSettings[msg.action] = !!msg.value;
           applyOverlayVisibility();
         }
+      } else if (msg.type === 'TTS_SPEAK') {
+        // Standalone template (không nằm trong iframe preview): tự phát audio trong tab này
+        if (window.self === window.top && msg.audioUrl && msg.playInObs !== false) {
+          try {
+            const player = new Audio(msg.audioUrl);
+            player.volume = typeof msg.volume === 'number' ? msg.volume : 1.0;
+            player.playbackRate = msg.speed || 1.0;
+            player.play().catch(() => {});
+          } catch (_) {}
+        }
       }
     },
   };

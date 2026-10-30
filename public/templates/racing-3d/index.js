@@ -177,6 +177,36 @@
   let raceFinished = false;
   let raceDuration = 60; // Duration of each heat countdown in seconds
   let raceTimeRemaining = 60;
+
+  // ==================== MEMORY LEAK CLEANUP & AUTO RELOAD ====================
+  const sessionStartTime = Date.now();
+
+  function disposeGroup(g) {
+    if (!g) return;
+    g.traverse((o) => {
+      if (o.geometry) {
+        try { o.geometry.dispose(); } catch (_) {}
+      }
+      if (o.material) {
+        const ms = Array.isArray(o.material) ? o.material : [o.material];
+        ms.forEach((m) => {
+          if (m.map) {
+            try { m.map.dispose(); } catch (_) {}
+          }
+          try { m.dispose(); } catch (_) {}
+        });
+      }
+    });
+  }
+
+  function checkAutoReloadMemory() {
+    if (Date.now() - sessionStartTime > 2 * 60 * 60 * 1000) {
+      console.log('[Memory] Đã chạy trên 2 tiếng. Tự động reload OBS Browser để dọn sạch RAM...');
+      location.reload();
+      return true;
+    }
+    return false;
+  }
   let racersPerHeat = 30;
   let baseSpeed = 1.8;
   let raceStartTime = 0;
@@ -1093,6 +1123,34 @@
     avatarPlane.position.set(0, 3.2, 0);
     car.add(avatarPlane);
 
+    // Dynamic 3D Speech Bubble for Live Comments
+    let chatBubbleSprite = null;
+    let chatBubbleTimer = null;
+
+    function showChatBubble(text) {
+      if (chatBubbleTimer) clearTimeout(chatBubbleTimer);
+      if (chatBubbleSprite) {
+        car.remove(chatBubbleSprite);
+        if (chatBubbleSprite.material?.map) chatBubbleSprite.material.map.dispose();
+        if (chatBubbleSprite.material) chatBubbleSprite.material.dispose();
+        chatBubbleSprite = null;
+      }
+      if (!text) return;
+
+      chatBubbleSprite = createSpeechBubbleSprite(text);
+      chatBubbleSprite.position.set(0, 5.5, 0);
+      car.add(chatBubbleSprite);
+
+      chatBubbleTimer = setTimeout(() => {
+        if (chatBubbleSprite) {
+          car.remove(chatBubbleSprite);
+          if (chatBubbleSprite.material?.map) chatBubbleSprite.material.map.dispose();
+          if (chatBubbleSprite.material) chatBubbleSprite.material.dispose();
+          chatBubbleSprite = null;
+        }
+      }, 5000);
+    }
+
     // Multi-row starting grid calculation (6 cars per row across 24m track)
     const cols = 6;
     const col = index % cols;
@@ -1121,6 +1179,7 @@
       laneSwitchTimer: 1.5 + Math.random() * 3,
       currentRank: index + 1,
       finished: false,
+      showChatBubble: showChatBubble,
     };
   }
 
@@ -1146,6 +1205,61 @@
       crown.add(spike);
     }
     return crown;
+  }
+
+  function escapeHtml(str) {
+    if (!str) return '';
+    return String(str).replace(/[&<>"']/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+  }
+
+  // Speech Bubble Sprite (Hiển thị bình luận nổi trên đầu xe trong 3D)
+  function createSpeechBubbleSprite(text) {
+    const canvasObj = document.createElement('canvas');
+    canvasObj.width = 340;
+    canvasObj.height = 110;
+    const ctx = canvasObj.getContext('2d');
+
+    ctx.save();
+    // Khung bong bóng chat neon mượt
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.94)';
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 4;
+
+    ctx.beginPath();
+    ctx.roundRect(8, 8, 324, 76, 18);
+    ctx.fill();
+    ctx.stroke();
+
+    // Đuôi chỉ xuống avatar
+    ctx.beginPath();
+    ctx.moveTo(160, 84);
+    ctx.lineTo(170, 102);
+    ctx.lineTo(180, 84);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.94)';
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.font = 'bold 22px sans-serif';
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    const clean = text.length > 22 ? text.slice(0, 20) + '...' : text;
+    ctx.fillText(`💬 ${clean}`, 170, 46);
+    ctx.restore();
+
+    const tex = new THREE.CanvasTexture(canvasObj);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const spriteMat = new THREE.SpriteMaterial({
+      map: tex,
+      transparent: true,
+      fog: false,
+      toneMapped: false,
+    });
+    const sprite = new THREE.Sprite(spriteMat);
+    sprite.scale.set(4.8, 1.55, 1);
+    return sprite;
   }
 
   // Crystal-Clear Avatar Billboard (Unlit, zero-fog, 100% bright sRGB)
@@ -1341,7 +1455,10 @@
       lbHeatInfo.textContent = `Chặng ${heatNumber}`;
     }
 
-    racers.forEach((r) => scene.remove(r.mesh));
+    racers.forEach((r) => {
+      disposeGroup(r.mesh);
+      scene.remove(r.mesh);
+    });
     racers = [];
 
     // 1. Sort all candidates by priority & VIP (highest score first)
@@ -1453,7 +1570,11 @@
       const boostMeters = 30;
       racer.bonusScore += boostMeters;
       racer.progress += boostMeters / 1100;
-      triggerNitro(racer, 1.4, 'BÌNH LUẬN 💬 (+30m)');
+      if (typeof racer.showChatBubble === 'function' && data.message) {
+        racer.showChatBubble(data.message);
+      }
+      const commentSnippet = (data.message || '').slice(0, 24);
+      triggerNitro(racer, 1.4, commentSnippet ? `"${commentSnippet}"` : 'BÌNH LUẬN 💬 (+30m)');
     } else if (type === 'like') {
       const boostMeters = 6;
       racer.bonusScore += boostMeters;
@@ -1584,6 +1705,7 @@
       podiumTimer.innerHTML = `Chặng tiếp theo sẽ bắt đầu sau: <b>${sec}s</b>`;
       if (sec <= 0) {
         clearInterval(cd);
+        if (checkAutoReloadMemory()) return;
         prepareNewHeat();
       }
     }, 1000);

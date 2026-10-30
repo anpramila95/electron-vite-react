@@ -1,4 +1,5 @@
 import { TikTokLiveConnection, WebcastEvent } from 'tiktok-live-connector'
+import { fakerVI, fakerEN } from '@faker-js/faker'
 import { db, type DbLogItem, type DbQueueItem, type SessionRecord } from './db'
 
 // Monkey patch to permanently prevent calling EulerStream paid endpoints
@@ -10,15 +11,18 @@ import { db, type DbLogItem, type DbQueueItem, type SessionRecord } from './db'
 }
 
 export interface StreamSettings {
-  title: string
-  subtitle: string
-  theme: number
-  speed: number
-  cardsPerSheet: number
-  rare: boolean
-  paused: boolean
-  turbo: boolean
-  rotate: boolean
+  title?: string
+  subtitle?: string
+  theme?: number
+  speed?: number
+  cardsPerSheet?: number
+  rare?: boolean
+  paused?: boolean
+  turbo?: boolean
+  rotate?: boolean
+  greetingText?: string
+  greetingInterval?: number
+  [key: string]: any
 }
 
 export interface TikTokConfig {
@@ -33,9 +37,20 @@ export interface TikTokConfig {
   onLike: boolean            // Tha tim -> vao hang cho
   onShare: boolean           // Chia se -> vao hang cho
   allowDuplicates: boolean   // Cho phep trung lap
+  autoFaker?: boolean        // Tu dong sinh bot moi khi vang khach (24/7)
+  autoFakerInterval?: number // Khoang thoi gian moi giay (mac dinh 20s)
   signApiKey?: string
   sessionId?: string
 }
+
+const BOT_GIFTS = [
+  { name: 'Hoa hồng', diamonds: 1 },
+  { name: 'Trái tim', diamonds: 1 },
+  { name: 'Bắn tim', diamonds: 5 },
+  { name: 'Trà sữa', diamonds: 10 },
+  { name: 'Cây kem', diamonds: 1 },
+  { name: 'Nước hoa', diamonds: 20 },
+]
 
 const getBestAvatar = (user: any): string => {
   if (!user) return ''
@@ -200,6 +215,138 @@ export class LiveSessionInstance {
     }
   }
 
+  // 24/7 Auto-Faker engine
+  private aiEngine?: any
+  private autoFakerTimer: NodeJS.Timeout | null = null
+  private lastRealInteractionTime = Date.now()
+
+  public setAiEngine(ai: any) {
+    this.aiEngine = ai
+  }
+
+  public startAutoFaker() {
+    this.stopAutoFaker()
+    this.lastRealInteractionTime = Date.now()
+    this.autoFakerTimer = setInterval(async () => {
+      if (!this.shouldRun || this.status !== 'running') {
+        this.stopAutoFaker()
+        return
+      }
+      if (this.tiktokConfig.autoFaker === false) return
+
+      // Yêu cầu: Nếu không bật AI setting thì KHÔNG chạy auto faker
+      if (!this.aiEngine || !this.aiEngine.isAiEnabled()) {
+        return
+      }
+
+      const intervalSec = this.tiktokConfig.autoFakerInterval || 20
+      const idleTime = (Date.now() - this.lastRealInteractionTime) / 1000
+      const currentQueue = db.getQueue(this.id)
+
+      if (idleTime >= intervalSec || currentQueue.length === 0) {
+        await this.triggerFakeInteraction()
+      }
+    }, 4000)
+  }
+
+  public stopAutoFaker() {
+    if (this.autoFakerTimer) {
+      clearInterval(this.autoFakerTimer)
+      this.autoFakerTimer = null
+    }
+  }
+
+  private async triggerFakeInteraction() {
+    this.lastRealInteractionTime = Date.now()
+
+    // 1. Kiểm tra AI Engine có bật không - nếu không bật thì không chạy auto faker
+    if (!this.aiEngine || !this.aiEngine.isAiEnabled()) {
+      return
+    }
+
+    // 2. Sinh tên tự nhiên bằng thư viện faker (@faker-js/faker)
+    const faker = Math.random() < 0.85 ? fakerVI : fakerEN
+    const name = faker.person.fullName()
+    const avatarId = Math.floor(Math.random() * 70) + 1
+    const photoUrl = `https://i.pravatar.cc/150?img=${avatarId}`
+    const uniqueId = `bot_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+
+    // Roll action: 75% comment AI, 15% quà nhỏ, 10% tham gia phòng
+    const roll = Math.random()
+    if (roll < 0.75) {
+      // 3. Bình luận hoàn toàn do AI sinh theo đúng Template và Stream Name
+      const comment = await this.aiEngine.getAiBotComment(this.templateId, this.name)
+      if (!comment) return
+
+      this.addUserScore(uniqueId, name, photoUrl, 3, false)
+      this.addToQueue({
+        uniqueId,
+        name,
+        photoUrl,
+        priority: 30,
+        isVip: false,
+        source: 'chat',
+        comment,
+      })
+      this.addLog('chat', name, comment, photoUrl)
+    } else if (roll < 0.90) {
+      const gift = BOT_GIFTS[Math.floor(Math.random() * BOT_GIFTS.length)]
+      const isBig = gift.diamonds >= (this.tiktokConfig.bigGiftThreshold || 10)
+      this.addUserScore(uniqueId, name, photoUrl, gift.diamonds * 10, isBig)
+      this.addToQueue({
+        uniqueId,
+        name,
+        photoUrl,
+        priority: isBig ? 10000 + gift.diamonds : 2000 + gift.diamonds,
+        isVip: isBig,
+        source: 'gift',
+        giftName: `${gift.name} (${gift.diamonds} xu)`,
+      })
+      this.addLog('gift', name, `Tặng ${gift.name} (${gift.diamonds} xu) 🎁`, photoUrl)
+    } else {
+      this.addUserScore(uniqueId, name, photoUrl, 1, false)
+      this.addToQueue({
+        uniqueId,
+        name,
+        photoUrl,
+        priority: 10,
+        isVip: false,
+        source: 'member',
+      })
+      this.addLog('member', name, 'Vừa tham gia phòng live', photoUrl)
+    }
+  }
+
+  // Periodic Greeting Engine per session
+  private greetingTimer: NodeJS.Timeout | null = null
+
+  public restartGreetingLoop() {
+    if (this.greetingTimer) {
+      clearInterval(this.greetingTimer)
+      this.greetingTimer = null
+    }
+
+    const minutes = Number(this.settings.greetingInterval) || 0
+    const text = (this.settings.greetingText || '').trim()
+
+    if (minutes > 0 && text && this.status === 'running') {
+      const intervalMs = Math.max(1, minutes) * 60 * 1000
+      this.greetingTimer = setInterval(() => {
+        this.triggerGreeting()
+      }, intervalMs)
+    }
+  }
+
+  public triggerGreeting() {
+    const text = (this.settings.greetingText || '').trim()
+    if (!text) return
+    this.onBroadcast('stream_greeting', {
+      sessionKey: this.streamKey,
+      text,
+      templateId: this.templateId,
+    })
+  }
+
   constructor(
     record: SessionRecord,
     onBroadcast: (event: string, data: any) => void,
@@ -289,6 +436,11 @@ export class LiveSessionInstance {
     this.shouldRun = true
     this.status = 'running'
     this.retryCount = 0
+    this.restartGreetingLoop()
+
+    if (this.tiktokConfig.autoFaker !== false) {
+      this.startAutoFaker()
+    }
 
     const username = LiveSessionInstance.cleanUsername(this.tiktokConfig.username)
     this.tiktokConfig.username = username
@@ -361,6 +513,7 @@ export class LiveSessionInstance {
       // 1. CHAT (Bình luận thật từ khán giả)
       this.connection.on(WebcastEvent.CHAT, (data: any) => {
         this.lastMessageTime = Date.now()
+        this.lastRealInteractionTime = Date.now()
         if (!this.isConnected) {
           this.isConnected = true
           this.broadcastStatus()
@@ -406,6 +559,7 @@ export class LiveSessionInstance {
       // 2. GIFT (Quà tặng từ khán giả)
       this.connection.on(WebcastEvent.GIFT, (data: any) => {
         this.lastMessageTime = Date.now()
+        this.lastRealInteractionTime = Date.now()
         if (!this.isConnected) {
           this.isConnected = true
           this.broadcastStatus()
@@ -460,6 +614,7 @@ export class LiveSessionInstance {
       // 3. MEMBER (Khán giả tham gia phòng live)
       this.connection.on(WebcastEvent.MEMBER, (data: any) => {
         this.lastMessageTime = Date.now()
+        this.lastRealInteractionTime = Date.now()
         if (!this.isConnected) {
           this.isConnected = true
           this.broadcastStatus()
@@ -503,9 +658,10 @@ export class LiveSessionInstance {
         this.broadcastStats()
       })
 
-      // 5. LIKE (Thả tim)
+      // 4. LIKE (Thả tim)
       this.connection.on(WebcastEvent.LIKE, (data: any) => {
         this.lastMessageTime = Date.now()
+        this.lastRealInteractionTime = Date.now()
         const nickname = data.user?.nickname || data.user?.displayId || 'Khán giả'
         const uniqueId = data.user?.displayId || data.user?.id || ''
         const avatar = getBestAvatar(data.user)
@@ -538,6 +694,7 @@ export class LiveSessionInstance {
       // 6. SOCIAL (Follow / Chia sẻ)
       this.connection.on(WebcastEvent.SOCIAL, (data: any) => {
         this.lastMessageTime = Date.now()
+        this.lastRealInteractionTime = Date.now()
         const nickname = data.user?.nickname || data.user?.displayId || 'Khán giả'
         const uniqueId = data.user?.displayId || data.user?.id || ''
         const avatar = getBestAvatar(data.user)
@@ -689,6 +846,11 @@ export class LiveSessionInstance {
 
   public stop() {
     this.shouldRun = false
+    if (this.greetingTimer) {
+      clearInterval(this.greetingTimer)
+      this.greetingTimer = null
+    }
+    this.stopAutoFaker()
     this.cleanupConnection()
     this.status = 'stopped'
     this.saveToDb()
@@ -707,6 +869,18 @@ export class LiveSessionInstance {
     giftName?: string
   }) {
     const queue = db.getQueue(this.id)
+
+    // 0. Chống phình to bộ nhớ: Giới hạn hàng chờ tối đa 250 người
+    if (queue.length >= 250) {
+      const nonVips = queue.filter((q) => q.is_vip !== 1)
+      if (nonVips.length > 0) {
+        const oldestNormal = nonVips[nonVips.length - 1]
+        db.removeQueueItem(oldestNormal.id)
+      } else {
+        const oldest = queue[queue.length - 1]
+        db.removeQueueItem(oldest.id)
+      }
+    }
 
     // 1. Tặng quà luôn luôn cho phép lặp lại (1 người tặng nhiều lần in nhiều lần)
     // 2. Các nguồn khác: kiểm tra allowDuplicates
@@ -846,6 +1020,7 @@ export class LiveSessionInstance {
     this.settings = { ...this.settings, ...newSettings }
     this.saveToDb()
     this.onBroadcast('settings', { sessionKey: this.streamKey, settings: this.settings })
+    this.restartGreetingLoop()
   }
 
   public updateConfig(newConfig: Partial<TikTokConfig>) {
@@ -859,6 +1034,14 @@ export class LiveSessionInstance {
     // Tự động tính toán lại VIP & độ ưu tiên cho các người dùng hiện có trong hàng chờ
     if (newConfig.bigGiftThreshold !== undefined && newConfig.bigGiftThreshold !== oldThreshold) {
       this.recalculateQueueVip(newConfig.bigGiftThreshold)
+    }
+
+    if (newConfig.autoFaker !== undefined || newConfig.autoFakerInterval !== undefined) {
+      if (this.tiktokConfig.autoFaker !== false && this.status === 'running') {
+        this.startAutoFaker()
+      } else {
+        this.stopAutoFaker()
+      }
     }
   }
 
@@ -951,16 +1134,27 @@ export class LiveSessionInstance {
 export class TikTokManager {
   private sessions: Map<string, LiveSessionInstance> = new Map()
   private onBroadcast: (event: string, data: any) => void
+  private aiEngine?: any
 
   constructor(onBroadcast: (event: string, data: any) => void) {
     this.onBroadcast = onBroadcast
     this.loadSessionsFromDb()
   }
 
+  public setAiEngine(ai: any) {
+    this.aiEngine = ai
+    for (const session of this.sessions.values()) {
+      session.setAiEngine(ai)
+    }
+  }
+
   private loadSessionsFromDb() {
     const list = db.getAllSessions()
     for (const rec of list) {
       const instance = new LiveSessionInstance(rec, this.onBroadcast)
+      if (this.aiEngine) {
+        instance.setAiEngine(this.aiEngine)
+      }
       this.sessions.set(rec.id, instance)
       // Auto-reconnect previously running sessions 24/7 on app startup
       if (instance.status === 'running') {
@@ -1032,6 +1226,9 @@ export class TikTokManager {
 
     db.saveSession(rec)
     const instance = new LiveSessionInstance(rec, this.onBroadcast)
+    if (this.aiEngine) {
+      instance.setAiEngine(this.aiEngine)
+    }
     this.sessions.set(id, instance)
     return instance
   }

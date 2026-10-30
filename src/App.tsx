@@ -48,6 +48,8 @@ interface TikTokConfig {
   onLike: boolean
   onShare: boolean
   allowDuplicates: boolean
+  autoFaker?: boolean
+  autoFakerInterval?: number
   signApiKey?: string
   sessionId?: string
 }
@@ -316,14 +318,14 @@ export default function App() {
   // AI & TTS Assistant State
   const [aiConfig, setAiConfig] = useState<{
     enabled: boolean
-    provider: 'openai' | 'gemini' | 'ollama' | 'deepseek' | 'custom' | 'rule_based'
+    provider: string
     apiKey: string
     baseUrl: string
     model: string
     batchInterval: number
     maxBatchSize: number
     ttsEnabled: boolean
-    ttsEngine: 'webspeech' | 'google' | 'openai' | 'elevenlabs' | 'custom_remote'
+    ttsEngine: 'edge' | 'custom_remote' | string
     ttsVoice: string
     ttsSpeed: number
     ttsVolume: number
@@ -334,18 +336,20 @@ export default function App() {
     ttsCustomMethod: 'GET' | 'POST'
     playInApp: boolean
     playInObs: boolean
+    greetingText?: string
+    greetingInterval?: number
     templatePrompts: Record<string, string>
   }>({
     enabled: true,
-    provider: 'openai',
+    provider: 'custom',
     apiKey: '',
     baseUrl: 'https://api.openai.com/v1',
     model: 'gpt-4o-mini',
     batchInterval: 6,
     maxBatchSize: 6,
     ttsEnabled: true,
-    ttsEngine: 'webspeech',
-    ttsVoice: 'vi-VN',
+    ttsEngine: 'edge',
+    ttsVoice: 'vi-VN-HoaiMyNeural',
     ttsSpeed: 1.0,
     ttsVolume: 1.0,
     ttsDuckMusic: true,
@@ -355,6 +359,8 @@ export default function App() {
     ttsCustomMethod: 'POST',
     playInApp: false,
     playInObs: true,
+    greetingText: '',
+    greetingInterval: 0,
     templatePrompts: {},
   })
   const [defaultPrompts, setDefaultPrompts] = useState<Record<string, string>>({})
@@ -555,12 +561,21 @@ export default function App() {
             utter.onerror = () => setIsSpeakingNow(false)
             window.speechSynthesis.speak(utter)
           } else if (payload.audioUrl) {
-            const audio = new Audio(payload.audioUrl)
+            const fullUrl = payload.audioUrl.startsWith('http')
+              ? payload.audioUrl
+              : `${serverInfo.baseObsUrl || 'http://localhost:3210'}${payload.audioUrl}`
+            const audio = new Audio(fullUrl)
             audio.volume = typeof payload.volume === 'number' ? payload.volume : 1.0
             audio.playbackRate = payload.speed || 1.0
             audio.onended = () => setIsSpeakingNow(false)
-            audio.onerror = () => setIsSpeakingNow(false)
-            audio.play().catch(() => {})
+            audio.onerror = (e) => {
+              console.warn('In-app TTS audio error:', e)
+              setIsSpeakingNow(false)
+            }
+            audio.play().catch((err) => {
+              console.warn('In-app TTS play failed:', err)
+              setIsSpeakingNow(false)
+            })
           }
         } catch (e) {
           console.warn('In-app TTS error:', e)
@@ -710,12 +725,27 @@ export default function App() {
   }
 
   const handleTestSpeak = async (customText?: string) => {
-    const textToSpeak = customText || testSpeechInput || 'Xin chào toàn thể anh em đang xem livestream nhé!'
     showNotice('🔊 Đang phát giọng nói thử nghiệm...')
     await window.ipcRenderer?.invoke('ai:test-speak', {
-      text: textToSpeak,
-      templateId: currentSession?.templateId || 'print_booth_3d',
+      text: customText,
+      templateId: currentSession?.templateId || 'fishing_3d',
     })
+  }
+
+  const handleSpeakGreeting = async (sessionId?: string) => {
+    const targetId = sessionId || currentSession?.id
+    if (!targetId) return
+    const s = sessions.find((item) => item.id === targetId)
+    if (!s?.settings?.greetingText?.trim()) {
+      showNotice('Chưa nhập câu chào cho phiên live này! Hãy nhập nội dung vào ô câu chào.', true)
+      return
+    }
+    showNotice('📢 Đang phát câu chào của phiên live này...')
+    try {
+      await window.ipcRenderer?.invoke('sessions:trigger-greeting', targetId)
+    } catch (e: any) {
+      showNotice(`Lỗi phát câu chào: ${e.message}`, true)
+    }
   }
 
   const handleResetPrompt = (templateId: string) => {
@@ -2098,6 +2128,89 @@ Quy tắc:
                         </span>
                       </label>
                     </div>
+
+                    <div className='flex items-center justify-between text-xs pt-1 border-t border-slate-800/80'>
+                      <label className='flex items-center gap-2 cursor-pointer'>
+                        <input
+                          type='checkbox'
+                          checked={currentSession.tiktokConfig.autoFaker !== false}
+                          onChange={(e) => updateConfig({ autoFaker: e.target.checked })}
+                          className='h-3.5 w-3.5 rounded accent-purple-500'
+                        />
+                        <span className='text-[11px] text-purple-300'>
+                          🤖 <strong>Auto Bot mồi (24/7):</strong> Tự sinh khán giả ảo khi vắng khách
+                        </span>
+                      </label>
+                      <div className='flex items-center gap-1 text-[10px] text-slate-400'>
+                        <span>Mỗi:</span>
+                        <select
+                          value={currentSession.tiktokConfig.autoFakerInterval || 20}
+                          onChange={(e) => updateConfig({ autoFakerInterval: Number(e.target.value) })}
+                          className='rounded border border-slate-700 bg-slate-950 px-1 py-0.5 text-white text-[10px] focus:outline-none'
+                        >
+                          <option value='10'>10s</option>
+                          <option value='15'>15s</option>
+                          <option value='20'>20s</option>
+                          <option value='30'>30s</option>
+                          <option value='60'>60s</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 1.3: CÂU CHÀO MỞ ĐẦU & LỜI NHẮC ĐỊNH KỲ (CHO RIÊNG PHIÊN LIVE NÀY) */}
+                <div className='rounded-2xl border border-indigo-500/30 bg-slate-900/70 p-4 shadow-md space-y-3'>
+                  <div className='flex items-center justify-between'>
+                    <h3 className='text-xs font-bold uppercase tracking-wider text-indigo-300 flex items-center gap-1.5'>
+                      <span>🎙️</span>
+                      <span>Câu Chào & Nhắc Định Kỳ (Phiên Này)</span>
+                    </h3>
+                    <span className='text-[10px] text-slate-400 font-medium'>
+                      {currentSession.settings?.greetingText?.trim() ? '🟢 Đang bật' : '⚪ Để trống = Không chào'}
+                    </span>
+                  </div>
+
+                  <p className='text-[11px] text-slate-400 leading-relaxed'>
+                    Soạn câu chào riêng cho phiên live này. Nếu để trống sẽ không chào. Có thể cài đặt chu kỳ tự động phát lại để khuấy động phòng live.
+                  </p>
+
+                  <div className='space-y-1'>
+                    <textarea
+                      rows={2}
+                      value={currentSession.settings?.greetingText || ''}
+                      onChange={(e) => updateSettingField('greetingText', e.target.value)}
+                      placeholder='Ví dụ: Chào mừng anh em đã ghé xem buổi live! Hãy comment và tặng quà để cùng tham gia nhé... (Để trống = KHÔNG CHÀO)'
+                      className='w-full rounded-xl border border-slate-800 bg-slate-950 p-2.5 text-xs text-white placeholder-slate-600 focus:border-indigo-500 focus:outline-none resize-none'
+                    />
+                  </div>
+
+                  <div className='flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-slate-800'>
+                    <div className='flex items-center gap-2'>
+                      <span className='text-[11px] font-bold text-slate-300'>Lặp lại:</span>
+                      <select
+                        value={currentSession.settings?.greetingInterval || 0}
+                        onChange={(e) => updateSettingField('greetingInterval', parseInt(e.target.value, 10) || 0)}
+                        className='rounded-lg border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-indigo-300 font-semibold focus:border-indigo-500 focus:outline-none cursor-pointer'
+                      >
+                        <option value={0}>Tắt lặp lại (Chỉ chào thủ công)</option>
+                        <option value={5}>Mỗi 5 phút phát 1 lần</option>
+                        <option value={10}>Mỗi 10 phút phát 1 lần</option>
+                        <option value={15}>Mỗi 15 phút phát 1 lần</option>
+                        <option value={20}>Mỗi 20 phút phát 1 lần</option>
+                        <option value={30}>Mỗi 30 phút phát 1 lần</option>
+                      </select>
+                    </div>
+
+                    <button
+                      type='button'
+                      onClick={() => handleSpeakGreeting(currentSession.id)}
+                      className='cursor-pointer rounded-lg bg-indigo-600 hover:bg-indigo-500 px-3 py-1 text-xs font-bold text-white shadow transition flex items-center gap-1.5'
+                      title='Phát câu chào ngay vào tab/webview của phiên live này'
+                    >
+                      <span>📢</span>
+                      <span>Phát câu chào ngay</span>
+                    </button>
                   </div>
                 </div>
               </div>
@@ -2772,61 +2885,44 @@ Quy tắc:
                     </label>
                   </div>
 
-                  {/* Provider Selector */}
-                  <div className='space-y-1.5'>
-                    <label className='font-bold text-slate-300'>
-                      Nhà Cung Cấp AI (AI Provider)
-                    </label>
-                    <div className='grid grid-cols-2 md:grid-cols-3 gap-2'>
-                      {[
-                        { id: 'openai', name: 'OpenAI (GPT-4o)', desc: 'Chuẩn quốc tế, phản hồi thông minh' },
-                        { id: 'gemini', name: 'Google Gemini', desc: 'Gemini 1.5 Flash cực nhanh & rẻ' },
-                        { id: 'ollama', name: 'Ollama Local (Offline)', desc: 'Miễn phí trên máy, không cần API Key' },
-                        { id: 'deepseek', name: 'DeepSeek AI', desc: 'Rất thông minh tiếng Việt, giá cực rẻ' },
-                        { id: 'custom', name: 'Tùy Chỉnh (OpenRouter/Groq)', desc: 'Chuẩn OpenAI compatible bất kỳ' },
-                        { id: 'rule_based', name: 'Cố Định (Không cần Key)', desc: 'Tự động nói kịch bản không tốn tiền' },
-                      ].map((prov) => (
-                        <button
-                          key={prov.id}
-                          type='button'
-                          onClick={() => {
-                            const updates: any = { provider: prov.id }
-                            if (prov.id === 'gemini') {
-                              updates.baseUrl = 'https://generativelanguage.googleapis.com/v1beta/openai'
-                              updates.model = 'gemini-1.5-flash'
-                            } else if (prov.id === 'ollama') {
-                              updates.baseUrl = 'http://localhost:11434/v1'
-                              updates.model = 'qwen2.5:3b'
-                            } else if (prov.id === 'deepseek') {
-                              updates.baseUrl = 'https://api.deepseek.com/v1'
-                              updates.model = 'deepseek-chat'
-                            } else if (prov.id === 'openai') {
-                              updates.baseUrl = 'https://api.openai.com/v1'
-                              updates.model = 'gpt-4o-mini'
-                            }
-                            updateAiConfig(updates)
-                          }}
-                          className={`rounded-xl border p-2.5 text-left transition cursor-pointer ${
-                            aiConfig.provider === prov.id
-                              ? 'border-cyan-500 bg-cyan-950/40 text-cyan-300 shadow-sm'
-                              : 'border-slate-800 bg-slate-950 text-slate-400 hover:text-white'
-                          }`}
-                        >
-                          <div className='font-bold text-[11.5px]'>{prov.name}</div>
-                          <div className='text-[10px] opacity-75 mt-0.5 line-clamp-1'>{prov.desc}</div>
-                        </button>
-                      ))}
+                  {/* Cấu Hình AI Endpoint & Model & Key */}
+                  <div className='space-y-3 rounded-xl border border-slate-800 bg-slate-950/70 p-3.5'>
+                    <div className='font-bold text-slate-200 flex items-center justify-between text-xs'>
+                      <span>⚙️ Cấu Hình Kết Nối AI (OpenAI Compatible)</span>
+                      <span className='text-[10px] text-slate-400 font-normal'>OpenAI, Gemini, DeepSeek, Groq, OpenRouter, Ollama...</span>
                     </div>
-                  </div>
 
-                  {aiConfig.provider !== 'rule_based' && (
-                    <div className='space-y-3 rounded-xl border border-slate-800 bg-slate-950/70 p-3'>
-                      {/* API Key */}
+                    {/* Base URL API */}
+                    <div className='space-y-1'>
+                      <label className='font-bold text-slate-300 flex items-center justify-between'>
+                        <span>Base URL API (Endpoint)</span>
+                        <span className='text-[10px] text-slate-500 font-normal'>Ví dụ: https://api.openai.com/v1 hoặc https://api.deepseek.com/v1</span>
+                      </label>
+                      <input
+                        type='text'
+                        value={aiConfig.baseUrl}
+                        onChange={(e) => updateAiConfig({ baseUrl: e.target.value })}
+                        placeholder='https://api.openai.com/v1'
+                        className='w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-white placeholder-slate-600 focus:border-cyan-500 focus:outline-none'
+                      />
+                    </div>
+
+                    {/* Model & API Key */}
+                    <div className='grid grid-cols-1 md:grid-cols-2 gap-3'>
+                      <div className='space-y-1'>
+                        <label className='font-bold text-slate-300'>Tên Model (Model ID)</label>
+                        <input
+                          type='text'
+                          value={aiConfig.model}
+                          onChange={(e) => updateAiConfig({ model: e.target.value })}
+                          placeholder='gpt-4o-mini / gemini-1.5-flash / deepseek-chat'
+                          className='w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-white placeholder-slate-600 focus:border-cyan-500 focus:outline-none'
+                        />
+                      </div>
+
                       <div className='space-y-1'>
                         <div className='flex items-center justify-between'>
-                          <label className='font-bold text-slate-300'>
-                            API Key {aiConfig.provider === 'ollama' ? '(Ollama không bắt buộc)' : ''}
-                          </label>
+                          <label className='font-bold text-slate-300'>API Key</label>
                           <button
                             type='button'
                             onClick={() => setShowApiKey(!showApiKey)}
@@ -2839,37 +2935,12 @@ Quy tắc:
                           type={showApiKey ? 'text' : 'password'}
                           value={aiConfig.apiKey}
                           onChange={(e) => updateAiConfig({ apiKey: e.target.value })}
-                          placeholder={aiConfig.provider === 'ollama' ? 'Không cần điền đối với Ollama' : 'sk-...'}
+                          placeholder='sk-...'
                           className='w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-xs font-mono text-cyan-300 placeholder-slate-600 focus:border-cyan-500 focus:outline-none'
                         />
                       </div>
-
-                      {/* Base URL & Model */}
-                      <div className='grid grid-cols-1 md:grid-cols-2 gap-3'>
-                        <div className='space-y-1'>
-                          <label className='font-bold text-slate-300'>Base URL API</label>
-                          <input
-                            type='text'
-                            value={aiConfig.baseUrl}
-                            onChange={(e) => updateAiConfig({ baseUrl: e.target.value })}
-                            placeholder='https://api.openai.com/v1'
-                            className='w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs text-white placeholder-slate-600 focus:border-cyan-500 focus:outline-none'
-                          />
-                        </div>
-
-                        <div className='space-y-1'>
-                          <label className='font-bold text-slate-300'>Tên Model</label>
-                          <input
-                            type='text'
-                            value={aiConfig.model}
-                            onChange={(e) => updateAiConfig({ model: e.target.value })}
-                            placeholder='gpt-4o-mini'
-                            className='w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs text-white placeholder-slate-600 focus:border-cyan-500 focus:outline-none'
-                          />
-                        </div>
-                      </div>
                     </div>
-                  )}
+                  </div>
 
                   {/* Batching & Rate Limit handling for crowd */}
                   <div className='rounded-xl border border-slate-800 bg-slate-950/70 p-3 space-y-3'>
@@ -2946,138 +3017,148 @@ Quy tắc:
                     </label>
                   </div>
 
-                  {/* Engine Selection */}
+                  {/* Engine Selection: Google TTS, Edge TTS & Custom Audio Endpoint */}
                   <div className='space-y-1.5'>
-                    <label className='font-bold text-slate-300'>Nhà Cung Cấp & Công Nghệ Đọc (TTS Engine)</label>
-                    <div className='grid grid-cols-2 md:grid-cols-3 gap-2'>
+                    <label className='font-bold text-slate-300'>Công Nghệ Đọc Giọng Nói (TTS Engine)</label>
+                    <div className='grid grid-cols-1 md:grid-cols-3 gap-2.5'>
                       {[
-                        { id: 'webspeech', name: '⚡ Web Speech (Bản Địa)', desc: '0ms trễ, miễn phí, tích hợp Windows & Chrome' },
                         { id: 'google', name: '☁️ Google TTS (Free MP3)', desc: 'Giọng chuẩn Google tiếng Việt, không cần Key' },
-                        { id: 'openai', name: '🤖 OpenAI Audio Speech', desc: 'Mô hình tts-1 / tts-1-hd, giọng rất mượt' },
-                        { id: 'elevenlabs', name: '🎙️ ElevenLabs AI', desc: 'Giọng nói AI truyền cảm, hỗ trợ Voice ID' },
-                        { id: 'custom_remote', name: '🌐 Custom Remote API', desc: 'Gọi API endpoint âm thanh riêng (GET/POST)' },
+                        { id: 'edge', name: '⚡ Microsoft Edge TTS', desc: 'Giọng đọc Edge tự nhiên (Hoài My, Nam Minh)' },
+                        { id: 'custom_remote', name: '🌐 Custom Audio Endpoint', desc: 'Gọi API endpoint âm thanh riêng (GET/POST)' },
                       ].map((item) => (
                         <button
                           key={item.id}
                           type='button'
                           onClick={() => {
                             const updates: any = { ttsEngine: item.id }
-                            if (item.id === 'openai') {
-                              updates.ttsBaseUrl = 'https://api.openai.com/v1'
-                              updates.ttsModel = 'tts-1'
-                              updates.ttsVoice = 'nova'
-                            } else if (item.id === 'elevenlabs') {
-                              updates.ttsModel = 'eleven_multilingual_v2'
-                              updates.ttsVoice = '21m00Tcm4TlvDq8ikWAM'
+                            if (item.id === 'edge') {
+                              updates.ttsVoice = 'vi-VN-HoaiMyNeural'
                             }
                             updateAiConfig(updates)
                           }}
-                          className={`rounded-xl border p-2.5 text-left transition cursor-pointer ${
-                            aiConfig.ttsEngine === item.id
-                              ? 'border-emerald-500 bg-emerald-950/30 text-emerald-300 shadow-sm'
+                          className={`rounded-xl border p-3 text-left transition cursor-pointer ${
+                            (aiConfig.ttsEngine === item.id || (!aiConfig.ttsEngine && item.id === 'google'))
+                              ? 'border-emerald-500 bg-emerald-950/40 text-emerald-300 shadow-sm'
                               : 'border-slate-800 bg-slate-950 text-slate-400 hover:text-white'
                           }`}
                         >
-                          <div className='font-bold text-[11.5px]'>{item.name}</div>
-                          <div className='text-[10px] opacity-75 mt-0.5 line-clamp-1'>{item.desc}</div>
+                          <div className='font-bold text-xs'>{item.name}</div>
+                          <div className='text-[11px] opacity-75 mt-0.5'>{item.desc}</div>
                         </button>
                       ))}
                     </div>
                   </div>
 
-                  {/* Remote TTS Configuration Card */}
-                  {(aiConfig.ttsEngine === 'openai' || aiConfig.ttsEngine === 'elevenlabs' || aiConfig.ttsEngine === 'custom_remote') && (
-                    <div className='space-y-3 rounded-xl border border-emerald-500/30 bg-slate-950/70 p-3'>
-                      <div className='font-bold text-emerald-300 flex items-center justify-between'>
-                        <span>⚙️ Cấu Hình Remote TTS API ({aiConfig.ttsEngine.toUpperCase()})</span>
-                        <span className='text-[10px] text-slate-400 font-normal'>Tự động fallback về Google TTS nếu lỗi API</span>
+                  {/* Cấu Hình Google TTS */}
+                  {aiConfig.ttsEngine === 'google' && (
+                    <div className='space-y-2 rounded-xl border border-emerald-500/30 bg-slate-950/70 p-3.5'>
+                      <div className='font-bold text-emerald-300 flex items-center justify-between text-xs'>
+                        <span>☁️ Cài Đặt Google Text-to-Speech (Free)</span>
+                        <span className='text-[10px] text-emerald-400 font-normal'>Trực tiếp từ Google Translate</span>
+                      </div>
+                      <p className='text-[11px] text-slate-400 leading-relaxed'>
+                        Sử dụng API âm thanh MP3 trực tiếp từ Google tiếng Việt. Miễn phí vĩnh viễn, phát mượt mà không cần cài đặt thêm.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Cấu Hình Edge TTS */}
+                  {(aiConfig.ttsEngine === 'edge' || aiConfig.ttsEngine === 'webspeech' || !aiConfig.ttsEngine) && (
+                    <div className='space-y-3 rounded-xl border border-emerald-500/30 bg-slate-950/70 p-3.5'>
+                      <div className='font-bold text-emerald-300 flex items-center justify-between text-xs'>
+                        <span>⚡ Cài Đặt Giọng Đọc Microsoft Edge TTS</span>
+                        <span className='text-[10px] text-emerald-400 font-normal'>Tự nhiên 100% tiếng Việt</span>
                       </div>
 
-                      {/* API Key */}
+                      <div className='grid grid-cols-1 md:grid-cols-2 gap-3'>
+                        <div className='space-y-1'>
+                          <label className='font-bold text-slate-300'>Chọn Giọng Đọc</label>
+                          <select
+                            value={aiConfig.ttsVoice || 'vi-VN-HoaiMyNeural'}
+                            onChange={(e) => updateAiConfig({ ttsVoice: e.target.value })}
+                            className='w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-white focus:border-emerald-500 focus:outline-none cursor-pointer'
+                          >
+                            <option value='vi-VN-HoaiMyNeural'>👩 Hoài My (Nữ - Ngọt ngào, truyền cảm)</option>
+                            <option value='vi-VN-NamMinhNeural'>👨 Nam Minh (Nam - Trầm ấm, rõ ràng)</option>
+                          </select>
+                        </div>
+
+                        <div className='space-y-1'>
+                          <div className='flex justify-between text-slate-300'>
+                            <span className='font-bold'>Tốc Độ Đọc</span>
+                            <span className='text-emerald-400 font-bold'>{aiConfig.ttsSpeed || 1.0}x</span>
+                          </div>
+                          <input
+                            type='range'
+                            min={0.8}
+                            max={1.4}
+                            step={0.05}
+                            value={aiConfig.ttsSpeed || 1.0}
+                            onChange={(e) => updateAiConfig({ ttsSpeed: parseFloat(e.target.value) })}
+                            className='w-full accent-emerald-500 cursor-pointer mt-2'
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Cấu Hình Custom Audio Endpoint */}
+                  {aiConfig.ttsEngine === 'custom_remote' && (
+                    <div className='space-y-3 rounded-xl border border-emerald-500/30 bg-slate-950/70 p-3.5'>
+                      <div className='font-bold text-emerald-300 flex items-center justify-between text-xs'>
+                        <span>🌐 Cấu Hình Custom Audio Endpoint</span>
+                        <span className='text-[10px] text-slate-400 font-normal'>Tự động fallback về Google TTS nếu lỗi</span>
+                      </div>
+
                       <div className='space-y-1'>
-                        <label className='font-bold text-slate-300'>
-                          API Key / Token {aiConfig.ttsEngine === 'elevenlabs' ? '(xi-api-key)' : '(Bearer Token)'}
-                        </label>
+                        <label className='font-bold text-slate-300'>Audio Endpoint URL (HTTP/HTTPS)</label>
                         <input
-                          type='password'
-                          value={aiConfig.ttsApiKey}
-                          onChange={(e) => updateAiConfig({ ttsApiKey: e.target.value })}
-                          placeholder={aiConfig.ttsEngine === 'openai' ? 'sk-...' : 'Nhập API key'}
-                          className='w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs font-mono text-emerald-300 placeholder-slate-600 focus:border-emerald-500 focus:outline-none'
+                          type='text'
+                          value={aiConfig.ttsBaseUrl}
+                          onChange={(e) => updateAiConfig({ ttsBaseUrl: e.target.value })}
+                          placeholder='https://my-tts-server/api/tts hoặc http://localhost:8000/speak'
+                          className='w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-white placeholder-slate-600 focus:border-emerald-500 focus:outline-none'
                         />
                       </div>
 
-                      {/* Endpoint Base URL & Model & Voice */}
-                      <div className='grid grid-cols-1 md:grid-cols-3 gap-2.5'>
+                      <div className='grid grid-cols-1 md:grid-cols-2 gap-3'>
                         <div className='space-y-1'>
-                          <label className='font-bold text-slate-300'>
-                            {aiConfig.ttsEngine === 'custom_remote' ? 'Endpoint URL (HTTP/S)' : 'Base URL'}
-                          </label>
+                          <label className='font-bold text-slate-300'>API Key / Token (Nếu có)</label>
                           <input
-                            type='text'
-                            value={aiConfig.ttsBaseUrl}
-                            onChange={(e) => updateAiConfig({ ttsBaseUrl: e.target.value })}
-                            placeholder={
-                              aiConfig.ttsEngine === 'openai'
-                                ? 'https://api.openai.com/v1'
-                                : aiConfig.ttsEngine === 'elevenlabs'
-                                ? 'https://api.elevenlabs.io/v1'
-                                : 'http://my-tts-server/api/speak'
-                            }
-                            className='w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs text-white placeholder-slate-600 focus:border-emerald-500 focus:outline-none'
+                            type='password'
+                            value={aiConfig.ttsApiKey}
+                            onChange={(e) => updateAiConfig({ ttsApiKey: e.target.value })}
+                            placeholder='Bearer token...'
+                            className='w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs text-emerald-300 placeholder-slate-600 focus:border-emerald-500 focus:outline-none'
                           />
                         </div>
 
                         <div className='space-y-1'>
-                          <label className='font-bold text-slate-300'>Model</label>
-                          <input
-                            type='text'
-                            value={aiConfig.ttsModel}
-                            onChange={(e) => updateAiConfig({ ttsModel: e.target.value })}
-                            placeholder={aiConfig.ttsEngine === 'openai' ? 'tts-1' : 'eleven_multilingual_v2'}
-                            className='w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs text-white placeholder-slate-600 focus:border-emerald-500 focus:outline-none'
-                          />
-                        </div>
-
-                        <div className='space-y-1'>
-                          <label className='font-bold text-slate-300'>
-                            {aiConfig.ttsEngine === 'elevenlabs' ? 'Voice ID' : 'Voice Name'}
-                          </label>
-                          <input
-                            type='text'
-                            value={aiConfig.ttsVoice}
-                            onChange={(e) => updateAiConfig({ ttsVoice: e.target.value })}
-                            placeholder={aiConfig.ttsEngine === 'openai' ? 'nova, alloy, shimmer' : 'Voice ID'}
-                            className='w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs text-white placeholder-slate-600 focus:border-emerald-500 focus:outline-none'
-                          />
+                          <label className='font-bold text-slate-300'>Phương thức HTTP</label>
+                          <div className='flex items-center gap-4 text-slate-300 pt-1.5'>
+                            <label className='flex items-center gap-1.5 cursor-pointer'>
+                              <input
+                                type='radio'
+                                name='customMethod'
+                                checked={aiConfig.ttsCustomMethod !== 'GET'}
+                                onChange={() => updateAiConfig({ ttsCustomMethod: 'POST' })}
+                                className='accent-emerald-500'
+                              />
+                              <span>POST (JSON)</span>
+                            </label>
+                            <label className='flex items-center gap-1.5 cursor-pointer'>
+                              <input
+                                type='radio'
+                                name='customMethod'
+                                checked={aiConfig.ttsCustomMethod === 'GET'}
+                                onChange={() => updateAiConfig({ ttsCustomMethod: 'GET' })}
+                                className='accent-emerald-500'
+                              />
+                              <span>GET (?text=...)</span>
+                            </label>
+                          </div>
                         </div>
                       </div>
-
-                      {aiConfig.ttsEngine === 'custom_remote' && (
-                        <div className='flex items-center gap-4 text-slate-300 pt-1'>
-                          <span className='font-bold'>Phương thức HTTP:</span>
-                          <label className='flex items-center gap-1 cursor-pointer'>
-                            <input
-                              type='radio'
-                              name='customMethod'
-                              checked={aiConfig.ttsCustomMethod !== 'GET'}
-                              onChange={() => updateAiConfig({ ttsCustomMethod: 'POST' })}
-                              className='accent-emerald-500'
-                            />
-                            <span>POST (JSON body)</span>
-                          </label>
-                          <label className='flex items-center gap-1 cursor-pointer'>
-                            <input
-                              type='radio'
-                              name='customMethod'
-                              checked={aiConfig.ttsCustomMethod === 'GET'}
-                              onChange={() => updateAiConfig({ ttsCustomMethod: 'GET' })}
-                              className='accent-emerald-500'
-                            />
-                            <span>GET (?text=...)</span>
-                          </label>
-                        </div>
-                      )}
                     </div>
                   )}
 

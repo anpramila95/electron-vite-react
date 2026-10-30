@@ -43,6 +43,18 @@
   const btnSoundToggle = document.getElementById('btn-sound-toggle');
   const hudSoundText = document.getElementById('hud-sound-text');
   const hudTopEl = document.querySelector('.hud-top');
+  const hudRoundTimer = document.getElementById('hud-round-timer');
+  const podiumModal = document.getElementById('podium-modal');
+  const p1Name = document.getElementById('p1-name');
+  const p1Avatar = document.getElementById('p1-avatar');
+  const p1Pts = document.getElementById('p1-pts');
+  const p2Name = document.getElementById('p2-name');
+  const p2Avatar = document.getElementById('p2-avatar');
+  const p2Pts = document.getElementById('p2-pts');
+  const p3Name = document.getElementById('p3-name');
+  const p3Avatar = document.getElementById('p3-avatar');
+  const p3Pts = document.getElementById('p3-pts');
+  const podiumTimer = document.getElementById('podium-next-timer');
   const leaderboardBox = document.getElementById('leaderboard-box');
   const btnLbScaleUp = document.getElementById('btn-lb-scale-up');
   const btnLbScaleDown = document.getElementById('btn-lb-scale-down');
@@ -62,6 +74,120 @@
   const anglers = []; // active angler objects
   const swimmingFish = [];
   const splashParticles = [];
+
+  // ==================== MEMORY LEAK CLEANUP HELPER ====================
+  const sessionStartTime = Date.now();
+
+  function disposeGroup(g) {
+    if (!g) return;
+    g.traverse((o) => {
+      if (o.geometry) {
+        try { o.geometry.dispose(); } catch (_) {}
+      }
+      if (o.material) {
+        const ms = Array.isArray(o.material) ? o.material : [o.material];
+        ms.forEach((m) => {
+          if (m.map) {
+            try { m.map.dispose(); } catch (_) {}
+          }
+          try { m.dispose(); } catch (_) {}
+        });
+      }
+    });
+  }
+
+  function checkAutoReloadMemory() {
+    // Tự động reload OBS browser source sau 2 tiếng chạy liên tục để dọn sạch 100% RAM GPU / V8
+    if (Date.now() - sessionStartTime > 2 * 60 * 60 * 1000) {
+      console.log('[Memory] Đã chạy hơn 2 tiếng. Tự động reload OBS Browser để dọn sạch RAM...');
+      location.reload();
+      return true;
+    }
+    return false;
+  }
+
+  // ==================== TOURNAMENT ROUND SYSTEM (AUTO RESET 24/7) ====================
+  let roundDuration = 60; // 60s mỗi hiệp đấu
+  let roundTimeRemaining = 60;
+  let roundActive = true;
+  let roundNumber = 1;
+
+  function updateRoundHUD() {
+    if (hudRoundTimer) {
+      hudRoundTimer.textContent = `${Math.ceil(roundTimeRemaining)}s`;
+    }
+  }
+
+  function onRoundFinished() {
+    if (!roundActive) return;
+    roundActive = false;
+    playSound('fanfare');
+
+    // Sắp xếp cần thủ theo Trọng lượng cá lớn nhất hoặc Điểm
+    const sorted = [...anglers]
+      .filter((a) => a.userData && a.userData.name)
+      .sort((a, b) => (b.userData.biggestKg || b.userData.score || 0) - (a.userData.biggestKg || a.userData.score || 0));
+
+    const p1 = sorted[0];
+    const p2 = sorted[1];
+    const p3 = sorted[2];
+
+    const defaultBot = (rank) => ({
+      name: `Cần thủ #${rank}`,
+      photoUrl: `https://i.pravatar.cc/150?img=${rank + 12}`,
+      biggestKg: 0,
+      score: 0,
+    });
+
+    const d1 = p1 ? p1.userData : defaultBot(1);
+    const d2 = p2 ? p2.userData : defaultBot(2);
+    const d3 = p3 ? p3.userData : defaultBot(3);
+
+    if (p1Name) p1Name.textContent = d1.name;
+    if (p1Avatar) p1Avatar.src = d1.photoUrl || `https://i.pravatar.cc/150?img=11`;
+    if (p1Pts) p1Pts.textContent = `${(d1.biggestKg || 0).toLocaleString()} KG (${d1.score || 0} đ)`;
+
+    if (p2Name) p2Name.textContent = d2.name;
+    if (p2Avatar) p2Avatar.src = d2.photoUrl || `https://i.pravatar.cc/150?img=12`;
+    if (p2Pts) p2Pts.textContent = `${(d2.biggestKg || 0).toLocaleString()} KG (${d2.score || 0} đ)`;
+
+    if (p3Name) p3Name.textContent = d3.name;
+    if (p3Avatar) p3Avatar.src = d3.photoUrl || `https://i.pravatar.cc/150?img=13`;
+    if (p3Pts) p3Pts.textContent = `${(d3.biggestKg || 0).toLocaleString()} KG (${d3.score || 0} đ)`;
+
+    if (podiumModal) podiumModal.classList.add('show');
+
+    let sec = 10;
+    if (podiumTimer) podiumTimer.innerHTML = `Hiệp tiếp theo sẽ bắt đầu sau: <b>${sec}s</b>`;
+    const cd = setInterval(() => {
+      sec--;
+      if (podiumTimer) podiumTimer.innerHTML = `Hiệp tiếp theo sẽ bắt đầu sau: <b>${sec}s</b>`;
+      if (sec <= 0) {
+        clearInterval(cd);
+        if (checkAutoReloadMemory()) return;
+        prepareNewRound();
+      }
+    }, 1000);
+  }
+
+  function prepareNewRound() {
+    if (podiumModal) podiumModal.classList.remove('show');
+    roundNumber++;
+    roundTimeRemaining = roundDuration;
+    updateRoundHUD();
+
+    // Reset điểm vòng đấu cho cần thủ để bắt đầu cuộc đua mới
+    anglers.forEach((a) => {
+      a.userData.score = 0;
+      a.userData.biggestKg = 0;
+      a.userData.totalCaught = 0;
+      a.state = 'CASTING';
+      a.stateTimer = 0.5 + Math.random() * 1.0;
+    });
+    totalFishCaught = 0;
+    updateHUD();
+    roundActive = true;
+  }
 
   // ==================== AUDIO SYNTHESIZER ====================
   let audioCtx = null;
@@ -154,15 +280,16 @@
   // ==================== FISH SPECIES CATALOG ====================
   const FISH_TIERS = {
     COMMON: {
-      name: 'Phổ Thông',
-      badge: 'PHỔ THÔNG',
-      minKg: 0.5,
-      maxKg: 4.5,
+      name: 'Bé Xíu',
+      badge: 'BÉ XÍU 🐟',
+      minKg: 0.1,
+      maxKg: 1.2,
       species: [
-        { name: 'Cá Rô Phi', emoji: '🐟', color: 0x64748b },
-        { name: 'Cá Diếc Bạc', emoji: '🐟', color: 0x94a3b8 },
-        { name: 'Cá Bống Biển', emoji: '🐡', color: 0xa1a1aa },
-        { name: 'Cá Chim Trắng', emoji: '🐠', color: 0x38bdf8 },
+        { name: 'Cá Bống Cát', emoji: '🐟', color: 0x94a3b8 },
+        { name: 'Cá Rô Đồng Nhỏ', emoji: '🐟', color: 0x64748b },
+        { name: 'Tép Rìu Tí Nị', emoji: '🦐', color: 0xfca5a5 },
+        { name: 'Cua Đồng Nhí', emoji: '🦀', color: 0xa1a1aa },
+        { name: 'Cá Lòng Tong', emoji: '🐠', color: 0x38bdf8 },
       ],
     },
     RARE: {
@@ -216,35 +343,30 @@
   };
 
   function rollFish(isVip, interactionScore = 0, giftBoost = 1) {
-    const roll = Math.random();
     let tierKey = 'COMMON';
 
-    // Tính bonus tier dựa trên điểm tương tác (quà tặng xu + comment tích lũy)
-    // Càng tặng nhiều quà hoặc comment nhiều, cơ hội câu cá khổng lồ càng cao
-    const bonus = Math.min((interactionScore || 0) / 500, 0.45); // tối đa +45% rate
-
     if (isVip) {
-      const mythicRate = Math.min(0.25 + bonus * 0.6, 0.6);
-      const legRate = Math.min(0.55 + bonus * 0.4, 0.85);
-      if (roll < mythicRate) tierKey = 'MYTHIC';
-      else if (roll < legRate) tierKey = 'LEGENDARY';
-      else if (roll < 0.9) tierKey = 'EPIC';
-      else tierKey = 'RARE';
+      // TẶNG QUÀ VIP: Bắt buộc chỉ câu được cá to khổng lồ (EPIC, LEGENDARY, MYTHIC)
+      const roll = Math.random();
+      const bonus = Math.min((interactionScore || 0) / 300, 0.4);
+      if (roll < 0.4 + bonus) {
+        tierKey = 'MYTHIC';
+      } else if (roll < 0.8) {
+        tierKey = 'LEGENDARY';
+      } else {
+        tierKey = 'EPIC';
+      }
     } else {
-      const mythicRate = 0.02 + bonus * 0.15;
-      const legRate = 0.08 + bonus * 0.25;
-      const epicRate = 0.25 + bonus * 0.35;
-      if (roll < mythicRate) tierKey = 'MYTHIC';
-      else if (roll < legRate) tierKey = 'LEGENDARY';
-      else if (roll < epicRate) tierKey = 'EPIC';
-      else if (roll < 0.65) tierKey = 'RARE';
-      else tierKey = 'COMMON';
+      // CMT / THƯỜNG: 100% chỉ câu được cá bé xíu
+      tierKey = 'COMMON';
     }
 
     const tier = FISH_TIERS[tierKey];
     const picked = tier.species[Math.floor(Math.random() * tier.species.length)];
-    const weightBoost = Math.max(1, giftBoost);
-    const weight = +(tier.minKg + Math.random() * (tier.maxKg - tier.minKg) * weightBoost).toFixed(1);
+    const weightBoost = isVip ? Math.max(1, giftBoost) : 1;
+    const minW = isVip ? tier.minKg : 0.1;
+    const maxW = isVip ? tier.maxKg : 1.2;
+    const weight = +(minW + Math.random() * (maxW - minW) * weightBoost).toFixed(1);
     return {
       tierKey,
       tierBadge: tier.badge,
@@ -418,6 +540,7 @@
 
   // ==================== SURROUNDING ENVIRONMENT ====================
   function createEnvironment() {
+    disposeGroup(terrainGroup);
     terrainGroup.clear();
 
     // Shore ring (bờ bao quanh hồ hình tròn/đa giác tự nhiên)
@@ -632,7 +755,56 @@
     return group;
   }
 
-  // ==================== AVATAR BILLBOARD ====================
+  // ==================== AVATAR BILLBOARD & 3D SPEECH BUBBLE ====================
+  function createSpeechBubbleSprite(text) {
+    const canvasObj = document.createElement('canvas');
+    canvasObj.width = 340;
+    canvasObj.height = 110;
+    const ctx = canvasObj.getContext('2d');
+
+    ctx.save();
+    // Khung bong bóng chat neon mượt
+    ctx.fillStyle = 'rgba(6, 18, 32, 0.94)';
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 4;
+
+    ctx.beginPath();
+    ctx.roundRect(8, 8, 324, 76, 18);
+    ctx.fill();
+    ctx.stroke();
+
+    // Đuôi chỉ xuống avatar cần thủ
+    ctx.beginPath();
+    ctx.moveTo(160, 84);
+    ctx.lineTo(170, 102);
+    ctx.lineTo(180, 84);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(6, 18, 32, 0.94)';
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.font = 'bold 22px sans-serif';
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    const clean = text.length > 22 ? text.slice(0, 20) + '...' : text;
+    ctx.fillText(`💬 ${clean}`, 170, 46);
+    ctx.restore();
+
+    const tex = new THREE.CanvasTexture(canvasObj);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const spriteMat = new THREE.SpriteMaterial({
+      map: tex,
+      transparent: true,
+      fog: false,
+      toneMapped: false,
+    });
+    const sprite = new THREE.Sprite(spriteMat);
+    sprite.scale.set(4.8, 1.55, 1);
+    return sprite;
+  }
+
   function createAvatarBillboard(photoUrl, name, isVip) {
     const canvasObj = document.createElement('canvas');
     canvasObj.width = 180;
@@ -936,6 +1108,34 @@
     crownSprite.visible = false;
     anglerGroup.add(crownSprite);
 
+    // Dynamic 3D Speech Bubble for Live Comments
+    let chatBubbleSprite = null;
+    let chatBubbleTimer = null;
+
+    function showChatBubble(text) {
+      if (chatBubbleTimer) clearTimeout(chatBubbleTimer);
+      if (chatBubbleSprite) {
+        anglerGroup.remove(chatBubbleSprite);
+        if (chatBubbleSprite.material?.map) chatBubbleSprite.material.map.dispose();
+        if (chatBubbleSprite.material) chatBubbleSprite.material.dispose();
+        chatBubbleSprite = null;
+      }
+      if (!text) return;
+
+      chatBubbleSprite = createSpeechBubbleSprite(text);
+      chatBubbleSprite.position.set(0, 5.3, 0);
+      anglerGroup.add(chatBubbleSprite);
+
+      chatBubbleTimer = setTimeout(() => {
+        if (chatBubbleSprite) {
+          anglerGroup.remove(chatBubbleSprite);
+          if (chatBubbleSprite.material?.map) chatBubbleSprite.material.map.dispose();
+          if (chatBubbleSprite.material) chatBubbleSprite.material.dispose();
+          chatBubbleSprite = null;
+        }
+      }, 5000);
+    }
+
     // Underglow ring on pier for Top rank
     const ringMat = new THREE.MeshBasicMaterial({ color: 0xfacc15, side: THREE.DoubleSide, transparent: true, opacity: 0.8 });
     const ring = new THREE.Mesh(new THREE.RingGeometry(1.4, 1.8, 24), ringMat);
@@ -970,6 +1170,7 @@
       targetBobberDist: bobberDistance,
       currentFish: null,
       bobberBaseY: 0,
+      showChatBubble: showChatBubble,
     };
 
     return anglerState;
@@ -1122,7 +1323,9 @@
     }
 
     playSound('splash');
-    playSound('fanfare');
+    if (fish.tierKey !== 'COMMON' || angler.userData.isVip) {
+      playSound('fanfare');
+    }
     // Bọt nước nổ tung hoành tráng tại vị trí cá cắn câu
     spawnSplash(angler.bobberGroup.getWorldPosition(new THREE.Vector3()), 26);
 
@@ -1141,6 +1344,22 @@
 
   // ==================== CATCH BANNER & TROPHY CARD ====================
   let bannerTimeout = null;
+
+  function showChatBanner(user, text) {
+    if (!catchBanner) return;
+    if (bannerTimeout) clearTimeout(bannerTimeout);
+
+    bannerIcon.textContent = '💬';
+    bannerUser.textContent = `${user.isVip ? '👑 VIP ' : ''}${user.name}`;
+    bannerFish.textContent = `"${text}"`;
+    bannerTier.textContent = 'BÌNH LUẬN';
+
+    catchBanner.classList.add('show');
+    bannerTimeout = setTimeout(() => {
+      catchBanner.classList.remove('show');
+    }, 3800);
+  }
+
   function showCatchBanner(user, fish) {
     if (!catchBanner) return;
     if (bannerTimeout) clearTimeout(bannerTimeout);
@@ -1211,12 +1430,15 @@
 
   // ==================== POPULATE & REFRESH ANGLERS ====================
   function rebuildAnglersFromQueue() {
+    disposeGroup(anglersGroup);
     anglersGroup.clear();
     anglers.length = 0;
 
-    const activeCount = Math.min(waitingQueue.length, maxAnglers);
+    // Tham gia (member) -> không có gì, không vào hồ câu. Chỉ người cmt hoặc tặng quà mới câu cá
+    const validQueue = waitingQueue.filter((u) => u.source !== 'member' && (u.priority === undefined || u.priority > 10));
+    const activeCount = Math.min(validQueue.length, maxAnglers);
     for (let i = 0; i < activeCount; i++) {
-      const user = waitingQueue[i];
+      const user = validQueue[i];
       const angler = createAngler(user, i, activeCount);
       anglersGroup.add(angler.group);
       anglers.push(angler);
@@ -1513,6 +1735,17 @@
     updateSplashes(delta);
     updateCamera(delta);
 
+    // Tournament round countdown timer
+    if (roundActive) {
+      roundTimeRemaining -= delta;
+      updateRoundHUD();
+      if (roundTimeRemaining <= 0) {
+        roundTimeRemaining = 0;
+        updateRoundHUD();
+        onRoundFinished();
+      }
+    }
+
     renderer.render(scene, camera);
   }
 
@@ -1555,7 +1788,7 @@
             });
           }
           if (Array.isArray(msg.queue)) {
-            waitingQueue = [...msg.queue];
+            waitingQueue = msg.queue.filter((u) => u.source !== 'member' && (u.priority === undefined || u.priority > 10));
             rebuildAnglersFromQueue();
           }
         } else if (msg.type === 'USER_SCORE_UPDATE' && msg.user) {
@@ -1568,6 +1801,10 @@
             updateHUD();
           }
         } else if (msg.type === 'ADD_USER' && msg.user) {
+          // Tham gia live -> không có gì, bỏ qua không vào hồ câu
+          if (msg.user.source === 'member' || msg.user.priority <= 10) {
+            return;
+          }
           // Check if user already exists
           const existing = waitingQueue.find((u) => u.id === msg.user.id || u.name === msg.user.name);
           if (!existing) {
@@ -1577,40 +1814,51 @@
             // Priority boost for VIP or gifts
             existing.isVip = !!msg.user.isVip || existing.isVip;
             const angler = anglers.find((a) => a.userData.name === existing.name);
-            if (angler) {
+            if (angler && msg.user.isVip) {
               angler.userData.isVip = true;
               angler.state = 'BITING';
-              angler.stateTimer = 0.5;
+              angler.stateTimer = 0.2;
+              angler.currentFish = rollFish(true, 100);
             }
           }
         } else if (msg.type === 'SET_QUEUE') {
           if (Array.isArray(msg.queue)) {
-            waitingQueue = [...msg.queue];
+            waitingQueue = msg.queue.filter((u) => u.source !== 'member' && (u.priority === undefined || u.priority > 10));
             rebuildAnglersFromQueue();
           }
         } else if (msg.type === 'CLEAR_QUEUE') {
           waitingQueue = [];
           rebuildAnglersFromQueue();
         } else if (msg.type === 'ADD_LOG' && msg.log) {
-          // Khi khán giả chat đúng hoặc tặng quà: tăng điểm tương tác -> tăng tỉ lệ cá to
+          // Sự kiện tham gia xem live -> không có gì
+          if (msg.log.type === 'member') return;
+
           const activeAngler = anglers.find((a) => a.userData.name === msg.log.userName);
           if (activeAngler) {
             if (msg.log.type === 'gift') {
+              // TẶNG QUÀ VIP -> CÂU CÁ TO KHỔNG LỒ (EPIC, LEGENDARY, MYTHIC)
               activeAngler.userData.isVip = true;
-              // Rút số xu từ text "(10 xu)"
               const match = (msg.log.message || '').match(/\((\d+)\s*xu\)/i);
               const dia = match ? parseInt(match[1], 10) : 10;
-              activeAngler.userData.interactionScore = (activeAngler.userData.interactionScore || 0) + dia * 15 + 100;
-              // Kích hoạt cắn câu cá khủng ngay lập tức
+              activeAngler.userData.interactionScore = (activeAngler.userData.interactionScore || 0) + dia * 20 + 200;
               activeAngler.state = 'BITING';
               activeAngler.stateTimer = 0.2;
               activeAngler.currentFish = rollFish(true, activeAngler.userData.interactionScore, 1.0 + Math.min(dia * 0.05, 3.0));
               playSound('fanfare');
-            } else {
-              // Comment / tương tác
-              activeAngler.userData.interactionScore = (activeAngler.userData.interactionScore || 0) + 15;
-              if (activeAngler.state === 'WAITING') {
-                activeAngler.stateTimer = Math.min(activeAngler.stateTimer, 0.6);
+            } else if (msg.log.type === 'chat') {
+              // CMT -> CÂU CÁ BÉ XÍU (COMMON) & HIỆN BÓNG THOẠI 3D + BANNER
+              activeAngler.userData.interactionScore = (activeAngler.userData.interactionScore || 0) + 10;
+              if (typeof activeAngler.showChatBubble === 'function' && msg.log.message) {
+                activeAngler.showChatBubble(msg.log.message);
+              }
+              if (msg.log.message) {
+                showChatBanner(activeAngler.userData, msg.log.message);
+              }
+              if (activeAngler.state === 'WAITING' || activeAngler.state === 'CASTING') {
+                activeAngler.state = 'BITING';
+                activeAngler.stateTimer = 0.3;
+                activeAngler.currentFish = rollFish(false);
+                playSound('splash');
               }
             }
           }

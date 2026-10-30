@@ -13,6 +13,7 @@ export interface ServerInstance {
   getClientCount: (streamKey?: string) => number
   getAllClientCounts: () => Record<string, number>
   onClientsChange?: (counts: Record<string, number>) => void
+  onClientMessage?: (streamKey: string, msg: any) => void
   close: () => Promise<void>
 }
 
@@ -42,6 +43,80 @@ const MIME_TYPES: Record<string, string> = {
   '.m4a': 'audio/mp4',
   '.flac': 'audio/flac',
   '.aac': 'audio/aac',
+}
+
+// Microsoft Edge TTS protocol client
+async function fetchEdgeTTS(text: string, voice = 'vi-VN-HoaiMyNeural', speed = 1.0): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const ws = new (WebSocket as any)(
+      'wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=6A5AA1D4EAFF4E9FB37E23D68491D6F4',
+      {
+        headers: {
+          'Origin': 'chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold',
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0',
+        },
+      }
+    )
+
+    const audioChunks: Buffer[] = []
+    const timeout = setTimeout(() => {
+      try {
+        ws.close()
+      } catch {}
+      reject(new Error('Edge TTS timeout'))
+    }, 12000)
+
+    ws.on('open', () => {
+      const configMsg =
+        'Content-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n' +
+        JSON.stringify({
+          context: {
+            synthesis: {
+              audio: {
+                metadataoptions: { sentenceBoundaryEnabled: 'false', wordBoundaryEnabled: 'false' },
+                outputFormat: 'audio-24khz-48kbitrate-mono-mp3',
+              },
+            },
+          },
+        })
+      ws.send(configMsg)
+
+      const ratePct = speed !== 1.0 ? `${Math.round((speed - 1.0) * 100)}%` : '+0%'
+      const ssmlMsg =
+        `X-RequestId:${Math.random().toString(36).slice(2)}\r\n` +
+        'Content-Type:application/ssml+xml\r\nPath:ssml\r\n\r\n' +
+        `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='vi-VN'>` +
+        `<voice name='${voice || 'vi-VN-HoaiMyNeural'}'><prosody rate='${ratePct}'>${text}</prosody></voice></speak>`
+      ws.send(ssmlMsg)
+    })
+
+    ws.on('message', (data: any, isBinary: boolean) => {
+      if (isBinary) {
+        const buf = Buffer.isBuffer(data) ? data : Buffer.from(data)
+        if (buf.length > 2) {
+          const headerLen = buf.readUInt16BE(0)
+          if (buf.length > 2 + headerLen) {
+            audioChunks.push(buf.subarray(2 + headerLen))
+          }
+        }
+      } else {
+        const str = data.toString()
+        if (str.includes('Path:turn.end')) {
+          clearTimeout(timeout)
+          try {
+            ws.close()
+          } catch {}
+          resolve(Buffer.concat(audioChunks))
+        }
+      }
+    })
+
+    ws.on('error', (err: any) => {
+      clearTimeout(timeout)
+      reject(err)
+    })
+  })
 }
 
 export function startLocalServer(publicDir: string, defaultPort = 3210): Promise<ServerInstance> {
@@ -276,80 +351,57 @@ export function startLocalServer(publicDir: string, defaultPort = 3210): Promise
           if (rawCfg) aiCfg = JSON.parse(rawCfg)
         } catch (_) {}
 
-        const engine = aiCfg.ttsEngine || 'google'
+        const engine = aiCfg.ttsEngine || 'edge'
 
-        // 1. OpenAI Audio Speech API
-        if (engine === 'openai' && aiCfg.ttsApiKey) {
+        // 1. Google Translate TTS (Free MP3)
+        if (engine === 'google') {
           try {
-            const openAiBase = (aiCfg.ttsBaseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '')
-            const resp = await fetch(`${openAiBase}/audio/speech`, {
-              method: 'POST',
+            const googleUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=${encodeURIComponent(lang)}&client=tw-ob&q=${encodeURIComponent(text.slice(0, 200))}`
+            const upstream = await fetch(googleUrl, {
               headers: {
-                'Authorization': `Bearer ${aiCfg.ttsApiKey.trim()}`,
-                'Content-Type': 'application/json',
+                'User-Agent':
+                  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'Accept': '*/*',
+                'Referer': 'https://translate.google.com/',
               },
-              body: JSON.stringify({
-                model: aiCfg.ttsModel || 'tts-1',
-                input: text,
-                voice: aiCfg.ttsVoice || 'nova',
-                speed: aiCfg.ttsSpeed || 1.0,
-              }),
-              signal: AbortSignal.timeout(10000),
+              signal: AbortSignal.timeout(8000),
             })
-            if (resp.ok) {
-              const arrayBuf = await resp.arrayBuffer()
-              res.writeHead(200, {
-                'Content-Type': resp.headers.get('content-type') || 'audio/mpeg',
-                'Content-Length': arrayBuf.byteLength,
-                'Cache-Control': 'public, max-age=7200',
-                'Access-Control-Allow-Origin': '*',
-              })
-              res.end(Buffer.from(arrayBuf))
-              return
-            }
-          } catch (err: any) {
-            console.warn('[TTS Server] OpenAI TTS failed, falling back to Google:', err.message)
-          }
-        }
-
-        // 2. ElevenLabs Text-to-Speech API
-        if (engine === 'elevenlabs' && aiCfg.ttsApiKey) {
-          try {
-            const voiceId = aiCfg.ttsVoice || '21m00Tcm4TlvDq8ikWAM' // Default Rachel / Multilingual
-            const resp = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}`, {
-              method: 'POST',
-              headers: {
-                'xi-api-key': aiCfg.ttsApiKey.trim(),
-                'Content-Type': 'application/json',
-                'Accept': 'audio/mpeg',
-              },
-              body: JSON.stringify({
-                text,
-                model_id: aiCfg.ttsModel || 'eleven_multilingual_v2',
-                voice_settings: {
-                  stability: 0.5,
-                  similarity_boost: 0.75,
-                },
-              }),
-              signal: AbortSignal.timeout(12000),
-            })
-            if (resp.ok) {
-              const arrayBuf = await resp.arrayBuffer()
+            if (upstream.ok) {
+              const arrayBuffer = await upstream.arrayBuffer()
               res.writeHead(200, {
                 'Content-Type': 'audio/mpeg',
-                'Content-Length': arrayBuf.byteLength,
+                'Content-Length': arrayBuffer.byteLength,
                 'Cache-Control': 'public, max-age=7200',
                 'Access-Control-Allow-Origin': '*',
               })
-              res.end(Buffer.from(arrayBuf))
+              res.end(Buffer.from(arrayBuffer))
               return
             }
           } catch (err: any) {
-            console.warn('[TTS Server] ElevenLabs TTS failed, falling back to Google:', err.message)
+            console.warn('[TTS Server] Google TTS failed, falling back to Edge TTS:', err.message)
           }
         }
 
-        // 3. Custom Remote TTS API (User specified URL)
+        // 2. Edge TTS (Microsoft Edge Natural Voice)
+        if (engine === 'edge' || engine === 'webspeech' || !engine) {
+          try {
+            const voice = aiCfg.ttsVoice || 'vi-VN-HoaiMyNeural'
+            const speed = typeof aiCfg.ttsSpeed === 'number' ? aiCfg.ttsSpeed : 1.0
+            const audioBuf = await fetchEdgeTTS(text, voice, speed)
+            res.writeHead(200, {
+              'Content-Type': 'audio/mpeg',
+              'Content-Length': audioBuf.length,
+              'Cache-Control': 'public, max-age=7200',
+              'Access-Control-Allow-Origin': '*',
+            })
+            res.end(audioBuf)
+            return
+          } catch (err: any) {
+            console.warn('[TTS Server] Edge TTS failed, falling back to Google TTS:', err.message)
+          }
+        }
+
+        // 3. Custom Remote Audio Endpoint (User specified HTTP/S URL)
         if (engine === 'custom_remote' && aiCfg.ttsBaseUrl) {
           try {
             const method = (aiCfg.ttsCustomMethod || 'POST').toUpperCase()
@@ -482,6 +534,7 @@ export function startLocalServer(publicDir: string, defaultPort = 3210): Promise
     }
 
     let onClientsChangeHandler: ((counts: Record<string, number>) => void) | undefined
+    let onClientMessageHandler: ((streamKey: string, msg: any) => void) | undefined
 
     const notifyClients = () => {
       if (onClientsChangeHandler) {
@@ -521,9 +574,13 @@ export function startLocalServer(publicDir: string, defaultPort = 3210): Promise
       ws.on('message', (message: any) => {
         try {
           const parsed = JSON.parse(message.toString())
+          const key = parsed.key || parsed.streamKey || socketStreamKeys.get(ws) || 'default'
           if (parsed.type === 'SUBSCRIBE' && parsed.key) {
             socketStreamKeys.set(ws, parsed.key)
             notifyClients()
+          }
+          if (onClientMessageHandler) {
+            onClientMessageHandler(key, parsed)
           }
         } catch {
           // Ignore
@@ -554,6 +611,12 @@ export function startLocalServer(publicDir: string, defaultPort = 3210): Promise
           },
           get onClientsChange() {
             return onClientsChangeHandler
+          },
+          set onClientMessage(fn: ((streamKey: string, msg: any) => void) | undefined) {
+            onClientMessageHandler = fn
+          },
+          get onClientMessage() {
+            return onClientMessageHandler
           },
           close: () =>
             new Promise<void>((resClose) => {

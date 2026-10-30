@@ -84,7 +84,7 @@ async function createWindow() {
     // Pass log to AI Engine for batch processing & TTS
     if (event === 'log' && data?.log && aiEngine) {
       const targetSession = data.sessionKey ? tiktokManager?.getSessionByStreamKey(data.sessionKey) : undefined
-      aiEngine.handleLog(targetSession?.templateId || 'print_booth_3d', data.log)
+      aiEngine.handleLog(targetSession?.templateId || 'print_booth_3d', data.log, data.sessionKey)
     }
 
     // Broadcast to matching OBS overlay via WebSocket
@@ -145,22 +145,80 @@ async function createWindow() {
           type: 'USER_SCORE_UPDATE',
           user: data.user,
         })
+      } else if (event === 'stream_greeting' && data?.text) {
+        const port = localServer ? localServer.port : 3210
+        const audioUrl = `http://localhost:${port}/api/tts?text=${encodeURIComponent(data.text)}&_t=${Date.now()}`
+        localServer.broadcastToKey(sessionKey, {
+          type: 'TTS_SPEAK',
+          id: `greet-${Date.now()}`,
+          text: data.text,
+          audioUrl,
+          streamKey: sessionKey,
+          templateId: data.templateId,
+          duckMusic: true,
+          playInObs: true,
+          playInApp: false,
+          timestamp: Date.now(),
+        })
       }
     }
   })
 
+  if (localServer) {
+    localServer.onClientMessage = (streamKey, msg) => {
+      const session = tiktokManager?.getSessionByStreamKey(streamKey)
+      if (!session) return
+
+      if (msg.type === 'CLEAR_QUEUE') {
+        session.clearQueue()
+      } else if (msg.type === 'USER_PRINTED' && msg.userId) {
+        const queue = session.getQueue()
+        const found = queue.find(
+          (q) => q.unique_id === String(msg.userId) || String(q.id) === String(msg.userId),
+        )
+        if (found) {
+          session.removeFromQueue(found.id)
+        }
+      }
+    }
+  }
+
   // 4. Initialize AI Engine & TTS Broadcaster
   aiEngine = new LiveAIEngine((payload) => {
-    if (win && !win.isDestroyed()) {
-      win.webContents.send('ai:speak', payload)
-    }
-    if (localServer) {
-      localServer.broadcastAll({
-        type: 'TTS_SPEAK',
+    const port = localServer?.port || 3210
+    const resolvedAudioUrl =
+      payload.audioUrl && payload.audioUrl.startsWith('/')
+        ? `http://localhost:${port}${payload.audioUrl}`
+        : payload.audioUrl
+
+    // Chỉ phát trên cửa sổ Electron nếu là thao tác bấm "Nói Thử" / Test thủ công.
+    // Lời nói tự động từ luồng live CHỈ phát trong đúng webview/OBS tab của stream đó.
+    if (payload.isTest && win && !win.isDestroyed()) {
+      win.webContents.send('ai:speak', {
         ...payload,
+        audioUrl: resolvedAudioUrl,
       })
     }
+
+    // Phát đúng vào webview / OBS Browser Source có streamKey tương ứng (cô lập 100% âm thanh giữa các stream)
+    if (localServer) {
+      if (payload.streamKey && payload.streamKey !== 'default') {
+        localServer.broadcastToKey(payload.streamKey, {
+          type: 'TTS_SPEAK',
+          ...payload,
+          audioUrl: resolvedAudioUrl,
+        })
+      } else {
+        localServer.broadcastAll({
+          type: 'TTS_SPEAK',
+          ...payload,
+          audioUrl: resolvedAudioUrl,
+        })
+      }
+    }
   })
+
+  tiktokManager?.setAiEngine(aiEngine)
 
   // Handle WebSocket new connections: send initial state of requested stream key
   if (localServer) {
@@ -700,6 +758,22 @@ ipcMain.handle('ai:update-config', (_, partial) => {
 ipcMain.handle('ai:test-speak', (_, { text, templateId }: { text?: string; templateId?: string } = {}) => {
   if (!aiEngine) return null
   return aiEngine.testSpeak(text, templateId)
+})
+
+ipcMain.handle('sessions:trigger-greeting', (_, sessionId: string) => {
+  const s = tiktokManager?.getSession(sessionId)
+  if (s) {
+    s.triggerGreeting()
+    return { success: true }
+  }
+  return { success: false }
+})
+
+ipcMain.handle('ai:set-active-template', (_, templateId: string) => {
+  if (aiEngine && templateId) {
+    aiEngine.setActiveTemplate(templateId)
+  }
+  return true
 })
 
 app.whenReady().then(createWindow)
