@@ -1,0 +1,87 @@
+{
+  "id": "buddha_temple_3d",
+  "name": "Chùa Online (Đi Chùa Lễ Phật)",
+  "description": "Giao diện Chùa Online livestream chuẩn TikTok: Đức Phật dát vàng phát hào quang, lư hương đồng cổ bốc khói nghi ngút, đại hồng chung, mâm ngũ quả, bảng công đức và quy đổi quà tặng dâng lễ.",
+  "icon": "🛕",
+  "badge": "TikTok Live",
+  "features": [
+    "Đại điện Chùa Vàng ánh kim: Đức Phật Thích Ca dát vàng toả hào quang thần thánh",
+    "Lư hương đồng cổ lớn bốc khói trắng cuộn nghi ngút, tàn hương đỏ rực",
+    "Mâm ngũ quả dâng lễ, Đại Hồng Chung trên giá gỗ chạm trổ",
+    "Đạo tràng phật tử chibi đa dạng (chú tiểu, thiện nam tín nữ, cụ bà) với Name tag chuẩn ảnh",
+    "Bảng quy đổi quà tặng bên trái: Hoa hồng thắp hương, Tim thắp nến, Sư tử thỉnh Rồng vàng",
+    "Bảng Công Đức bên phải xếp hạng top cúng dường thời gian thực",
+    "Banner VIP Đại Công Đức & banner cúng dường lướt dưới màn hình",
+    "Web Audio: Tiếng Đại Hồng Chung ngân vang & Tiếng Mõ cốc cốc thanh tịnh"
+  ],
+  "settingsSchema": [
+    {
+      "key": "maxDevotees",
+      "label": "Số phật tử tối đa trong chánh điện (10 - 100 người)",
+      "type": "range",
+      "defaultValue": 40,
+      "min": 10,
+      "max": 100,
+      "step": 2,
+      "unit": "người"
+    },
+    {
+      "key": "enableAudio",
+      "label": "Âm thanh Chuông Chùa & Tiếng Mõ (SFX)",
+      "type": "boolean",
+      "defaultValue": true
+    },
+    {
+      "key": "showGiftGuide",
+      "label": "Hiển thị Bảng quy đổi quà tặng (Tặng quà để...)",
+      "type": "boolean",
+      "defaultValue": true
+    },
+    {
+      "key": "showLeaderboard",
+      "label": "Hiển thị Bảng Công Đức (Leaderboard)",
+      "type": "boolean",
+      "defaultValue": true
+    },
+    {
+      "key": "showBanners",
+      "label": "Hiển thị Banners vinh danh dưới đáy màn hình",
+      "type": "boolean",
+      "defaultValue": true
+    }
+  ],
+  "actions": [
+    {
+      "id": "all_prostrate",
+      "label": "ĐẠI CHÚNG LỄ PHẬT",
+      "icon": "🙇",
+      "variant": "warning",
+      "actionKey": "vip_prostrate",
+      "group": "temple_actions"
+    },
+    {
+      "id": "all_chant",
+      "label": "ĐỒNG THANH NIỆM PHẬT",
+      "icon": "📿",
+      "variant": "accent",
+      "actionKey": "all_chant",
+      "group": "temple_actions"
+    },
+    {
+      "id": "ring_bell",
+      "label": "THỈNH ĐẠI HỒNG CHUNG",
+      "icon": "🔔",
+      "variant": "primary",
+      "actionKey": "ring_bell",
+      "group": "temple_actions"
+    },
+    {
+      "id": "strike_woodblock",
+      "label": "GÕ MÕ TỤNG KINH",
+      "icon": "🥢",
+      "variant": "secondary",
+      "actionKey": "strike_woodblock",
+      "group": "temple_actions"
+    }
+  ]
+}

@@ -1,5 +1,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 export interface TemplateOptionField {
   key: string
@@ -35,89 +38,58 @@ export interface StreamTemplate {
   actions: TemplateAction[]
 }
 
-const DEFAULT_TEMPLATES: StreamTemplate[] = [
-  {
-    id: 'print_booth_3d',
-    name: 'Máy In Avatar 3D',
-    description: 'Máy in 3D mô phỏng vẽ chân dung avatar khán giả theo phong cách cơ khí chân thực với Three.js.',
-    icon: '🖨️',
-    entryFile: 'templates/print-booth-3d/index.html',
-    badge: 'Mặc định',
-    features: ['Three.js 3D', 'Vẽ lát cắt avatar thật', 'Khung thẻ VIP', 'Đổi 5 góc camera', '5 Chủ đề màu'],
-    settingsSchema: [],
-    actions: [],
-  },
-  {
-    id: 'racing_3d',
-    name: 'Đua Xe Avatar 3D (Grand Prix)',
-    description: 'Trường đua xe 3D tương tác. Xe mô hình gắn avatar khán giả, phụt lửa Nitro khi tặng quà, camera đuổi bám theo xe top 1.',
-    icon: '🏎️',
-    entryFile: 'templates/racing-3d/index.html',
-    badge: 'Three.js 3D',
-    features: ['Three.js 3D', 'Xe gắn avatar thật', 'Lửa Nitro phản lực', 'Bám camera Top 1', 'Bục vinh danh'],
-    settingsSchema: [],
-    actions: [],
-  },
-  {
-    id: 'fishing_3d',
-    name: 'Câu Cá Avatar 3D (Fisherman King)',
-    description: 'Đấu trường câu cá 3D tương tác. VIP và điểm càng cao câu cá càng to khổng lồ. Bảng xếp hạng chiến tích thời gian thực.',
-    icon: '🎣',
-    entryFile: 'templates/fishing-3d/index.html',
-    badge: 'Three.js 3D',
-    features: ['Three.js 3D', 'Mặt nước phản chiếu gợn sóng', 'Cá to theo VIP & điểm', '5 Bản đồ sông hồ biển', 'Bảng xếp hạng cần thủ'],
-    settingsSchema: [],
-    actions: [],
-  }
-]
+function resolveTemplatesDir(publicDir?: string): string {
+  const candidates = [
+    publicDir,
+    process.env.VITE_PUBLIC,
+    path.join(process.cwd(), 'public'),
+    path.join(__dirname, '../../public'),
+  ].filter(Boolean) as string[]
 
-// Dynamically discover and load all templates from public/templates/*/settings.json
+  for (const base of candidates) {
+    const dir = base.endsWith('templates') ? base : path.join(base, 'templates')
+    if (fs.existsSync(dir)) return dir
+  }
+  return path.join(process.cwd(), 'public', 'templates')
+}
+
+// Auto load all templates from public/templates/*/
 export function loadAllTemplates(publicDir?: string): StreamTemplate[] {
-  const baseDir = publicDir || path.join(process.cwd(), 'public')
-  const templatesDir = path.join(baseDir, 'templates')
+  const dir = resolveTemplatesDir(publicDir)
+  if (!fs.existsSync(dir)) return []
 
-  if (!fs.existsSync(templatesDir)) {
-    return DEFAULT_TEMPLATES
-  }
+  return fs.readdirSync(dir, { withFileTypes: true })
+    .filter((d) => d.isDirectory())
+    .map((d) => {
+      const folder = d.name
+      const settingsPath = path.join(dir, folder, 'settings.json')
+      let meta: Partial<StreamTemplate> = {}
 
-  const result: StreamTemplate[] = []
-
-  try {
-    const folders = fs.readdirSync(templatesDir, { withFileTypes: true })
-    for (const folder of folders) {
-      if (folder.isDirectory()) {
-        const settingsPath = path.join(templatesDir, folder.name, 'settings.json')
-        if (fs.existsSync(settingsPath)) {
-          try {
-            const raw = fs.readFileSync(settingsPath, 'utf8')
-            const parsed = JSON.parse(raw)
-            result.push({
-              id: parsed.id || folder.name,
-              name: parsed.name || folder.name,
-              description: parsed.description || '',
-              icon: parsed.icon || '🎮',
-              entryFile: `templates/${folder.name}/index.html`,
-              badge: parsed.badge || 'Template',
-              features: Array.isArray(parsed.features) ? parsed.features : [],
-              settingsSchema: Array.isArray(parsed.settingsSchema) ? parsed.settingsSchema : [],
-              actions: Array.isArray(parsed.actions) ? parsed.actions : [],
-            })
-          } catch (e) {
-            console.error(`Error loading template ${folder.name}:`, e)
-          }
+      if (fs.existsSync(settingsPath)) {
+        try {
+          meta = JSON.parse(fs.readFileSync(settingsPath, 'utf8'))
+        } catch (e) {
+          console.error(`[templates] Failed to parse ${folder}/settings.json:`, e)
         }
       }
-    }
-  } catch (err) {
-    console.error('Failed to read templates dir:', err)
-  }
 
-  return result.length > 0 ? result : DEFAULT_TEMPLATES
+      return {
+        id: meta.id || folder,
+        name: meta.name || folder.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+        description: meta.description || '',
+        icon: meta.icon || '🎮',
+        entryFile: `templates/${folder}/index.html`,
+        badge: meta.badge || 'Template',
+        features: Array.isArray(meta.features) ? meta.features : [],
+        settingsSchema: Array.isArray(meta.settingsSchema) ? meta.settingsSchema : [],
+        actions: Array.isArray(meta.actions) ? meta.actions : [],
+      }
+    })
 }
 
 export const STREAM_TEMPLATES: StreamTemplate[] = loadAllTemplates()
 
-export function getTemplateById(id: string, publicDir?: string): StreamTemplate {
+export function getTemplateById(id: string, publicDir?: string): StreamTemplate | undefined {
   const all = loadAllTemplates(publicDir)
-  return all.find((t) => t.id === id) || all[0] || DEFAULT_TEMPLATES[0]
+  return all.find((t) => t.id === id || t.entryFile.includes(`/${id}/`)) || all[0]
 }

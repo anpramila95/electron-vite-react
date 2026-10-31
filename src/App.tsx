@@ -276,6 +276,17 @@ function VirtualQueueList({
   )
 }
 
+const PRESET_GIFTS = [
+  { name: 'Hoa hồng', diamonds: 1, icon: '🌹' },
+  { name: 'Kem ốc quế', diamonds: 1, icon: '🍦' },
+  { name: 'Game Controller', diamonds: 100, icon: '🎮' },
+  { name: 'Melon Juice', diamonds: 199, icon: '🧋' },
+  { name: 'Boxing Gloves', diamonds: 299, icon: '🥊' },
+  { name: 'Manifesting', diamonds: 500, icon: '🔮' },
+  { name: 'Phi hành gia', diamonds: 1000, icon: '🚀' },
+  { name: 'Sư tử', diamonds: 29999, icon: '🦁' },
+]
+
 export default function App() {
   const [sessions, setSessions] = useState<SessionData[]>([])
   const [templates, setTemplates] = useState<StreamTemplate[]>([])
@@ -289,11 +300,37 @@ export default function App() {
   const [copyToast, setCopyToast] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [logFilter, setLogFilter] = useState<'all' | 'chat' | 'gift' | 'member'>('all')
-  const [queueTab, setQueueTab] = useState<'waiting' | 'running'>('waiting')
+  const [queueTab, setQueueTab] = useState<'waiting' | 'running' | 'logs'>('waiting')
   const [showMusicPlayer, setShowMusicPlayer] = useState(false)
   const [showFakerModal, setShowFakerModal] = useState(false)
   const [previewClientCounts, setPreviewClientCounts] = useState<Record<string, number>>({})
   const [actionNotice, setActionNotice] = useState<{ text: string; isError?: boolean } | null>(null)
+
+  // Resizable 3 Columns & Embedded Live Preview
+  const [leftWidth, setLeftWidth] = useState<number>(() => {
+    const saved = localStorage.getItem('dash_col_left_width')
+    return saved ? Math.max(280, Math.min(650, Number(saved))) : 390
+  })
+  const [previewWidth, setPreviewWidth] = useState<number>(() => {
+    const saved = localStorage.getItem('dash_col_preview_width')
+    return saved ? Math.max(280, Math.min(850, Number(saved))) : 430
+  })
+  const [showPreview, setShowPreview] = useState<boolean>(() => {
+    const saved = localStorage.getItem('dash_col_show_preview')
+    return saved !== null ? saved === 'true' : true
+  })
+  const [iframeKey, setIframeKey] = useState(0)
+  const [isResizing, setIsResizing] = useState(false)
+  const resizingSideRef = useRef<'left' | 'right' | null>(null)
+  const resizeStartXRef = useRef(0)
+  const resizeStartWidthRef = useRef(0)
+
+  // Giả Lập Quà Tặng (Test Stream)
+  const [simGiftName, setSimGiftName] = useState('Hoa hồng')
+  const [simGiftDiamonds, setSimGiftDiamonds] = useState(1)
+  const [simGiftRepeat, setSimGiftRepeat] = useState(1)
+  const [simUserName, setSimUserName] = useState('')
+  const [isSimulatingGift, setIsSimulatingGift] = useState(false)
 
   // Proxy & EulerStream Settings
   const [showSettingsModal, setShowSettingsModal] = useState(false)
@@ -388,6 +425,69 @@ export default function App() {
   const [manualName, setManualName] = useState('')
   const [manualAvatar, setManualAvatar] = useState('')
   const [manualIsVip, setManualIsVip] = useState(false)
+
+  const leftWidthRef = useRef(leftWidth)
+  const previewWidthRef = useRef(previewWidth)
+  const panelContainerRef = useRef<HTMLDivElement | null>(null)
+  leftWidthRef.current = leftWidth
+  previewWidthRef.current = previewWidth
+
+  // Resizer Event Handlers
+  const startResizeLeft = (e: React.MouseEvent) => {
+    e.preventDefault()
+    resizingSideRef.current = 'left'
+    resizeStartXRef.current = e.clientX
+    resizeStartWidthRef.current = leftWidth
+    setIsResizing(true)
+  }
+
+  const startResizeRight = (e: React.MouseEvent) => {
+    e.preventDefault()
+    resizingSideRef.current = 'right'
+    resizeStartXRef.current = e.clientX
+    resizeStartWidthRef.current = previewWidth
+    setIsResizing(true)
+  }
+
+  useEffect(() => {
+    if (!isResizing) return
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const containerWidth = panelContainerRef.current?.clientWidth || window.innerWidth
+      const dividerWidth = showPreview ? 16 : 8
+      const middleMinWidth = 420
+
+      if (resizingSideRef.current === 'left') {
+        const delta = e.clientX - resizeStartXRef.current
+        const maxLeftByLayout = Math.max(280, containerWidth - middleMinWidth - (showPreview ? previewWidthRef.current : 0) - dividerWidth)
+        const newW = Math.max(280, Math.min(Math.min(650, maxLeftByLayout), resizeStartWidthRef.current + delta))
+        setLeftWidth(newW)
+      } else if (resizingSideRef.current === 'right') {
+        const delta = resizeStartXRef.current - e.clientX
+        const maxPreviewByLayout = Math.max(280, containerWidth - leftWidthRef.current - middleMinWidth - dividerWidth)
+        const newW = Math.max(280, Math.min(Math.min(850, maxPreviewByLayout), resizeStartWidthRef.current + delta))
+        setPreviewWidth(newW)
+      }
+    }
+
+    const handleMouseUp = () => {
+      setIsResizing(false)
+      resizingSideRef.current = null
+      localStorage.setItem('dash_col_left_width', String(leftWidthRef.current))
+      localStorage.setItem('dash_col_preview_width', String(previewWidthRef.current))
+    }
+
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [isResizing])
+
+  useEffect(() => {
+    localStorage.setItem('dash_col_show_preview', String(showPreview))
+  }, [showPreview])
 
   // Active Session
   const currentSession = sessions.find((s) => s.id === currentSessionId) || sessions[0]
@@ -503,14 +603,14 @@ export default function App() {
                 ...s,
                 logs: newLogs.slice(0, 100),
               }
-            } else if (event === 'user_printing') {
+            } else if (event === 'user_active' || event === 'user_printing') {
               const currentPrinting = s.printingUsers || []
               const exists = currentPrinting.some((u: any) => u.id === data.user?.id)
               return {
                 ...s,
                 printingUsers: exists ? currentPrinting : [data.user, ...currentPrinting],
               }
-            } else if (event === 'user_printed' || event === 'user_removed') {
+            } else if (event === 'user_completed' || event === 'user_printed' || event === 'user_removed') {
               const currentPrinting = s.printingUsers || []
               const targetId = data.userId ?? data.id
               return {
@@ -548,8 +648,9 @@ export default function App() {
       setLastSpokenText(payload.text)
       setIsSpeakingNow(true)
 
-      // Play audio locally in Electron if enabled
-      if (payload.playInApp !== false) {
+      // Chỉ phát âm thanh trên Electron UI khi bấm "Test giọng nói" thủ công trong cài đặt.
+      // Âm thanh của các phiên live thực tế CHỈ phát ở đúng tab/webview của phiên live đó.
+      if (payload.isTest && payload.playInApp !== false) {
         try {
           if (payload.engine === 'webspeech' && 'speechSynthesis' in window) {
             window.speechSynthesis.cancel()
@@ -949,6 +1050,35 @@ Quy tắc:
     setManualName('')
     setManualAvatar('')
     setManualIsVip(false)
+  }
+
+  const handleSimulateGift = async (override?: { name?: string; giftName: string; diamonds: number; repeatCount?: number }) => {
+    if (!currentSession || !window.ipcRenderer) return
+    const gift = override || {
+      name: simUserName.trim() || undefined,
+      giftName: simGiftName.trim() || 'Hoa hồng',
+      diamonds: Math.max(1, Number(simGiftDiamonds) || 1),
+      repeatCount: Math.max(1, Number(simGiftRepeat) || 1),
+    }
+    setIsSimulatingGift(true)
+    try {
+      const res = await window.ipcRenderer.invoke('session:simulate-gift', {
+        sessionId: currentSession.id,
+        gift,
+      })
+      if (res?.success) {
+        const count = gift.repeatCount ?? 1
+        showNotice(
+          `🎁 Đã bắn ${count > 1 ? `${count}x ` : ''}${gift.giftName} (${res.totalDiamonds} xu) từ ${res.nickname}!`,
+        )
+      } else {
+        showNotice(`✕ Lỗi bắn quà: ${res?.error || 'Không xác định'}`, true)
+      }
+    } catch (err: any) {
+      showNotice(`✕ Lỗi bắn quà: ${err?.message || err}`, true)
+    } finally {
+      setIsSimulatingGift(false)
+    }
   }
 
   const filteredLogs = (currentSession?.logs || [])
@@ -1503,25 +1633,34 @@ Quy tắc:
                   {copyToast ? '✅ Đã chép' : '📋 Copy Link OBS'}
                 </button>
                 <button
-                  onClick={() => openObsPreview()}
+                  onClick={() => {
+                    setShowPreview((prev) => {
+                      const next = !prev
+                      // Force iframe remount each time user toggles preview to guarantee socket teardown/re-init.
+                      setIframeKey((k) => k + 1)
+                      return next
+                    })
+                  }}
                   className={`rounded-lg border px-3 py-1 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
+                    showPreview
+                      ? 'border-cyan-500/50 bg-cyan-950/60 text-cyan-300 hover:bg-cyan-900/60'
+                      : 'border-slate-800 bg-slate-950 text-slate-400 hover:text-white'
+                  }`}
+                  title={showPreview ? 'Nhấn để ẩn cột Preview trực tiếp (đóng kết nối socket để giải phóng RAM)' : 'Nhấn để mở cột Preview trực tiếp'}
+                >
+                  <span className={`h-2 w-2 rounded-full ${showPreview ? 'bg-cyan-400' : 'bg-slate-600'}`} />
+                  <span>Cột Preview: {showPreview ? 'ĐANG BẬT' : 'ĐÃ ẨN'}</span>
+                </button>
+                <button
+                  onClick={() => openObsPreview()}
+                  className={`rounded-lg border px-2.5 py-1 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
                     hasActivePreview
                       ? 'border-emerald-500/40 bg-emerald-950/50 text-emerald-300 hover:bg-emerald-900/60'
-                      : 'border-amber-500/40 bg-amber-950/40 text-amber-300 hover:bg-amber-900/50'
+                      : 'border-slate-800 bg-slate-950 text-slate-400 hover:text-white'
                   }`}
-                  title={hasActivePreview ? `Preview OBS đang mở (${activePreviewClients} client)` : 'Chưa mở Preview OBS (nhấn để mở)'}
+                  title={hasActivePreview ? `Preview OBS đang mở (${activePreviewClients} client)` : 'Mở link preview ra trình duyệt ngoài'}
                 >
-                  {hasActivePreview ? (
-                    <>
-                      <span className='h-2 w-2 rounded-full bg-emerald-400 animate-pulse' />
-                      <span>OBS Preview ({activePreviewClients})</span>
-                    </>
-                  ) : (
-                    <>
-                      <span className='inline-block h-2.5 w-2.5 animate-spin rounded-full border-2 border-amber-400 border-t-transparent' />
-                      <span>Mở Preview OBS</span>
-                    </>
-                  )}
+                  <span>Tab Ngoài ↗️</span>
                 </button>
                 {currentSession.status === 'running' ? (
                   <button
@@ -1637,10 +1776,17 @@ Quy tắc:
               )
             })()}
 
-            {/* Panels (3 columns) */}
-            <div className='grid flex-1 grid-cols-1 gap-4 overflow-y-auto p-4 lg:grid-cols-12 lg:overflow-hidden'>
-              {/* CỘT 1: OPTIONS & ACTIONS THEO ĐÚNG TEMPLATE (4 cols) */}
-              <div className='flex flex-col gap-4 lg:col-span-4 lg:overflow-y-auto dark-scroll pr-1'>
+            {/* Panels (Resizable 3 Columns: Options/Simulate -> Queue/Logs Tabs -> Live Preview) */}
+            <div
+              ref={panelContainerRef}
+              className='flex flex-1 overflow-hidden p-3 gap-0 relative select-none'
+              style={{ userSelect: isResizing ? 'none' : 'auto' }}
+            >
+              {/* CỘT 1: OPTIONS, ACTIONS, KÊNH TIKTOK, GIẢ LẬP QUÀ, TTS */}
+              <div
+                style={{ width: `${leftWidth}px`, minWidth: '280px', maxWidth: '650px' }}
+                className='flex flex-col gap-3 overflow-y-auto dark-scroll pr-1.5 shrink-0 select-text'
+              >
                 {/* 1.1: BẢNG ĐIỀU KHIỂN ĐỘNG THEO SCHEMA CỦA TEMPLATE */}
                 <div className='rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-md space-y-4'>
                   <div className='flex items-center justify-between border-b border-slate-800 pb-2.5'>
@@ -2159,7 +2305,128 @@ Quy tắc:
                   </div>
                 </div>
 
-                {/* 1.3: CÂU CHÀO MỞ ĐẦU & LỜI NHẮC ĐỊNH KỲ (CHO RIÊNG PHIÊN LIVE NÀY) */}
+                {/* 1.3: GIẢ LẬP QUÀ TẶNG (TEST STREAM) */}
+                <div className='rounded-2xl border border-pink-500/30 bg-slate-900/70 p-4 shadow-md space-y-3'>
+                  <div className='flex items-center justify-between'>
+                    <h3 className='text-xs font-bold uppercase tracking-wider text-pink-300 flex items-center gap-1.5'>
+                      <span>🎁</span>
+                      <span>Giả Lập Quà Tặng (Test Stream)</span>
+                    </h3>
+                    <span className='text-[10px] font-bold text-amber-400'>
+                      {(simGiftDiamonds * simGiftRepeat).toLocaleString()} xu
+                    </span>
+                  </div>
+
+                  {/* Preset Gift Quick Buttons */}
+                  <div className='grid grid-cols-4 gap-1.5'>
+                    {PRESET_GIFTS.map((g) => (
+                      <button
+                        key={g.name}
+                        type='button'
+                        onClick={() => {
+                          setSimGiftName(g.name)
+                          setSimGiftDiamonds(g.diamonds)
+                        }}
+                        onDoubleClick={() => {
+                          setSimGiftName(g.name)
+                          setSimGiftDiamonds(g.diamonds)
+                          handleSimulateGift({ giftName: g.name, diamonds: g.diamonds, repeatCount: 1 })
+                        }}
+                        className={`group relative rounded-lg p-1.5 text-center transition flex flex-col items-center justify-center border cursor-pointer ${
+                          simGiftName === g.name
+                            ? 'border-pink-500 bg-pink-500/20 text-white shadow-sm'
+                            : 'border-slate-800 bg-slate-950/60 text-slate-300 hover:border-slate-700 hover:bg-slate-800'
+                        }`}
+                        title={`${g.name} (${g.diamonds} xu) - Nhấn để chọn, Double click để bắn ngay`}
+                      >
+                        <span
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleSimulateGift({ giftName: g.name, diamonds: g.diamonds, repeatCount: 1 })
+                          }}
+                          className='absolute top-0.5 right-0.5 opacity-0 group-hover:opacity-100 hover:scale-125 transition-all px-1 py-0.2 text-[8px] bg-pink-600 rounded text-white font-bold'
+                          title='Bắn ngay 1 quà này'
+                        >
+                          ⚡
+                        </span>
+                        <span className='text-sm mb-0.5'>{g.icon}</span>
+                        <span className='text-[10px] font-bold truncate max-w-full'>{g.name}</span>
+                        <span className='text-[9px] text-amber-400 font-mono'>{g.diamonds} xu</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Custom Inputs */}
+                  <div className='space-y-2 pt-1 border-t border-slate-800/80 text-xs'>
+                    <div className='grid grid-cols-2 gap-2'>
+                      <div>
+                        <label className='block text-[10px] font-semibold text-slate-400 mb-0.5'>
+                          Tên món quà
+                        </label>
+                        <input
+                          type='text'
+                          value={simGiftName}
+                          onChange={(e) => setSimGiftName(e.target.value)}
+                          placeholder='Hoa hồng'
+                          className='w-full rounded-lg border border-slate-800 bg-slate-950 px-2.5 py-1 text-xs text-white focus:border-pink-500 focus:outline-none'
+                        />
+                      </div>
+                      <div>
+                        <label className='block text-[10px] font-semibold text-slate-400 mb-0.5'>
+                          Số xu / 1 quà
+                        </label>
+                        <input
+                          type='number'
+                          min='1'
+                          value={simGiftDiamonds}
+                          onChange={(e) => setSimGiftDiamonds(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                          className='w-full rounded-lg border border-slate-800 bg-slate-950 px-2.5 py-1 text-xs text-amber-400 font-bold focus:border-pink-500 focus:outline-none'
+                        />
+                      </div>
+                    </div>
+
+                    <div className='grid grid-cols-2 gap-2'>
+                      <div>
+                        <label className='block text-[10px] font-semibold text-slate-400 mb-0.5'>
+                          Số lượng (combo x)
+                        </label>
+                        <input
+                          type='number'
+                          min='1'
+                          value={simGiftRepeat}
+                          onChange={(e) => setSimGiftRepeat(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                          className='w-full rounded-lg border border-slate-800 bg-slate-950 px-2.5 py-1 text-xs text-white font-bold focus:border-pink-500 focus:outline-none'
+                        />
+                      </div>
+                      <div>
+                        <label className='block text-[10px] font-semibold text-slate-400 mb-0.5'>
+                          Tên người tặng (tùy chọn)
+                        </label>
+                        <input
+                          type='text'
+                          value={simUserName}
+                          onChange={(e) => setSimUserName(e.target.value)}
+                          placeholder='Để trống = ngẫu nhiên'
+                          className='w-full rounded-lg border border-slate-800 bg-slate-950 px-2.5 py-1 text-xs text-slate-300 focus:border-pink-500 focus:outline-none'
+                        />
+                      </div>
+                    </div>
+
+                    <button
+                      type='button'
+                      disabled={isSimulatingGift}
+                      onClick={() => handleSimulateGift()}
+                      className='w-full cursor-pointer rounded-xl bg-gradient-to-r from-pink-600 via-rose-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 py-2 text-xs font-black text-white shadow-md shadow-pink-600/25 active:scale-[0.98] transition flex items-center justify-center gap-1.5 disabled:opacity-50'
+                    >
+                      <span>🚀</span>
+                      <span>
+                        Bắn quà vào Stream: {simGiftRepeat > 1 ? `${simGiftRepeat}x ` : ''}{simGiftName} ({(simGiftDiamonds * simGiftRepeat).toLocaleString()} xu)
+                      </span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* 1.4: CÂU CHÀO MỞ ĐẦU & LỜI NHẮC ĐỊNH KỲ (CHO RIÊNG PHIÊN LIVE NÀY) */}
                 <div className='rounded-2xl border border-indigo-500/30 bg-slate-900/70 p-4 shadow-md space-y-3'>
                   <div className='flex items-center justify-between'>
                     <h3 className='text-xs font-bold uppercase tracking-wider text-indigo-300 flex items-center gap-1.5'>
@@ -2213,13 +2480,108 @@ Quy tắc:
                     </button>
                   </div>
                 </div>
+
+                {/* 1.4: ĐỌC TÊN LẦN LƯỢT THEO HÀNG CHỜ (ĐỌC XONG XÓA) */}
+                <div className='rounded-2xl border border-amber-500/30 bg-slate-900/70 p-4 shadow-md space-y-3'>
+                  <div className='flex items-center justify-between'>
+                    <h3 className='text-xs font-bold uppercase tracking-wider text-amber-300 flex items-center gap-1.5'>
+                      <span>🪷</span>
+                      <span>Đọc Tên & Lời Chúc Theo Hàng Chờ (TTS)</span>
+                    </h3>
+                    <label className='relative inline-flex items-center cursor-pointer'>
+                      <input
+                        type='checkbox'
+                        checked={!!currentSession.settings?.ttsQueueEnabled}
+                        onChange={(e) => updateSettingField('ttsQueueEnabled', e.target.checked)}
+                        className='sr-only peer'
+                      />
+                      <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-500"></div>
+                    </label>
+                  </div>
+
+                  <p className='text-[11px] text-slate-400 leading-relaxed'>
+                    Tự động đọc lần lượt khán giả trong hàng chờ: <b>[Tên] + [Hành động/Quà] + [Lời chúc ngẫu nhiên]</b>. Đọc xong sẽ tự động xóa người đó ra khỏi hàng chờ giống chế độ in.
+                  </p>
+
+                  <div className='flex flex-wrap items-center gap-3 pt-1'>
+                    <label className='flex items-center gap-2 cursor-pointer text-xs text-slate-300'>
+                      <input
+                        type='checkbox'
+                        checked={!!currentSession.settings?.ttsVipOnly}
+                        onChange={(e) => updateSettingField('ttsVipOnly', e.target.checked)}
+                        className='rounded border-slate-700 bg-slate-950 text-amber-500 focus:ring-0 cursor-pointer'
+                      />
+                      <span>Chỉ đọc người đạt điều kiện VIP (tặng quà lớn)</span>
+                    </label>
+
+                    <label className='flex items-center gap-2 cursor-pointer text-xs text-rose-300'>
+                      <input
+                        type='checkbox'
+                        checked={currentSession.settings?.ttsFilterBannedWords !== false}
+                        onChange={(e) => updateSettingField('ttsFilterBannedWords', e.target.checked)}
+                        className='rounded border-slate-700 bg-slate-950 text-rose-500 focus:ring-0 cursor-pointer'
+                      />
+                      <span>🛡️ Lọc từ cấm/tục tĩu (không đọc bình luận xấu)</span>
+                    </label>
+
+                    <div className='flex items-center gap-2 text-xs text-slate-400'>
+                      <span>Cụm từ đọc quà:</span>
+                      <input
+                        type='text'
+                        value={currentSession.settings?.ttsGiftPrefix ?? (currentSession.templateId?.includes('buddha') ? 'vừa cúng dường' : 'vừa tặng')}
+                        onChange={(e) => updateSettingField('ttsGiftPrefix', e.target.value)}
+                        placeholder='vừa cúng dường'
+                        className='w-32 rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs text-amber-300 font-semibold focus:border-amber-500 focus:outline-none'
+                      />
+                    </div>
+                  </div>
+
+                  {currentSession.settings?.ttsFilterBannedWords !== false && (
+                    <div className='space-y-1 pt-1'>
+                      <div className='flex items-center justify-between text-[11px] text-slate-400'>
+                        <span className='font-bold text-rose-400'>Từ cấm bổ sung (phân cách dấu phẩy hoặc xuống dòng):</span>
+                        <span className='text-[10px] text-slate-500'>Đã tích hợp sẵn bộ từ tục tĩu tiếng Việt</span>
+                      </div>
+                      <input
+                        type='text'
+                        value={currentSession.settings?.ttsBannedWordsText || ''}
+                        onChange={(e) => updateSettingField('ttsBannedWordsText', e.target.value)}
+                        placeholder='Ví dụ: từ1, từ2, từ3...'
+                        className='w-full rounded-xl border border-slate-800 bg-slate-950 p-2 text-xs text-rose-200 placeholder-slate-600 focus:border-rose-500 focus:outline-none'
+                      />
+                    </div>
+                  )}
+
+                  <div className='space-y-1.5 pt-1'>
+                    <div className='flex items-center justify-between text-[11px] text-slate-400'>
+                      <span className='font-bold text-slate-300'>Danh sách lời chúc ngẫu nhiên (mỗi dòng 1 câu):</span>
+                      <span className='text-[10px] text-slate-500'>Dùng {'{name}'} để chèn tên</span>
+                    </div>
+                    <textarea
+                      rows={3}
+                      value={currentSession.settings?.ttsWishesText ?? (currentSession.templateId?.includes('buddha') ? 'chúc {name} thuận buồm xuôi gió, muôn điều may mắn!\nnguyện chúc {name} luôn bình an, cát tường như ý!\ncầu chúc {name} dồi dào sức khỏe, phúc lộc đủ đầy!\nchúc {name} công việc hanh thông, tài lộc dồi dào!' : 'chúc {name} xem live vui vẻ và tràn đầy may mắn!\nchúc {name} ngày mới thuận buồm xuôi gió!\nchúc {name} vạn sự cát tường, công việc hanh thông!')}
+                      onChange={(e) => updateSettingField('ttsWishesText', e.target.value)}
+                      placeholder='chúc {name} thuận buồm xuôi gió, muôn điều may mắn!&#10;nguyện chúc {name} luôn bình an, thân tâm an lạc!'
+                      className='w-full rounded-xl border border-slate-800 bg-slate-950 p-2.5 text-xs text-amber-200 placeholder-slate-600 focus:border-amber-500 focus:outline-none font-mono resize-none'
+                    />
+                  </div>
+                </div>
               </div>
 
-              {/* CỘT 2: Quản lý hàng chờ (5 cols) */}
-              <div className='flex flex-col gap-3 lg:col-span-5 lg:overflow-hidden'>
+              {/* Divider 1: Resize Left Column */}
+              <div
+                role='separator'
+                aria-label='Resize left panel'
+                onMouseDown={startResizeLeft}
+                className='mx-1.5 w-1.5 shrink-0 rounded-full bg-slate-800/90 hover:bg-cyan-500/70 cursor-col-resize transition'
+                title='Kéo để thay đổi độ rộng cột trái'
+              />
+
+              {/* CỘT 2: Hàng chờ / Đang chạy / Nhật ký (dạng tab) */}
+              <div className='flex min-w-[420px] flex-1 flex-col gap-3 overflow-hidden px-1.5'>
                 <div className='flex flex-1 flex-col rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-md overflow-hidden'>
                   <div className='mb-3 flex items-center justify-between border-b border-slate-800 pb-2.5'>
-                    {/* 2 Tab: Hàng chờ (mặc định) & Đang chạy */}
+                    {/* 3 Tab: Hàng chờ / Đang chạy / Nhật ký */}
                     <div className='flex items-center gap-1.5'>
                       <button
                         type='button'
@@ -2258,7 +2620,7 @@ Quy tắc:
                               <span className='relative inline-flex rounded-full h-2 w-2 bg-amber-500'></span>
                             </span>
                           )}
-                          ⚡ Đang in
+                          ⚡ Đang lên hình
                         </span>
                         <span
                           className={`rounded-full px-1.5 py-0.2 text-[10px] ${
@@ -2271,6 +2633,27 @@ Quy tắc:
                             30,
                             (currentSession.printingUsers || []).length + (currentSession.queue || []).length,
                           )}
+                        </span>
+                      </button>
+
+                      <button
+                        type='button'
+                        onClick={() => setQueueTab('logs')}
+                        className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-bold transition ${
+                          queueTab === 'logs'
+                            ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 shadow-sm'
+                            : 'text-slate-400 hover:text-white bg-slate-950/60 border border-slate-800/80'
+                        }`}
+                      >
+                        <span>💬 Nhật ký</span>
+                        <span
+                          className={`rounded-full px-1.5 py-0.2 text-[10px] ${
+                            queueTab === 'logs'
+                              ? 'bg-indigo-500 text-slate-950 font-black'
+                              : 'bg-slate-800 text-slate-300'
+                          }`}
+                        >
+                          {filteredLogs.length}
                         </span>
                       </button>
                     </div>
@@ -2333,7 +2716,7 @@ Quy tắc:
                         getSourceBadge={getSourceBadge}
                       />
                     </>
-                  ) : (
+                  ) : queueTab === 'running' ? (
                     /* Tab 2: Danh sách 30 người cần in gần nhất */
                     <div className='flex-1 overflow-y-auto dark-scroll space-y-2 pr-1'>
                       {(() => {
@@ -2346,12 +2729,10 @@ Quy tắc:
                             <div className='flex h-64 flex-col items-center justify-center text-center text-slate-500'>
                               <span className='text-3xl mb-2'>🖨️</span>
                               <p className='text-xs font-medium text-slate-300 mb-1'>
-                                Chưa có khán giả nào trong danh sách in
+                                Chưa có khán giả nào đang lên hình
                               </p>
                               <p className='text-[11px] text-slate-500 max-w-xs'>
-                                {isPrinterTemplate
-                                  ? 'Khi có khán giả trong hàng chờ hoặc máy in bắt đầu vẽ, 30 lượt in gần nhất sẽ hiển thị tại đây.'
-                                  : 'Khán giả bình luận hoặc tặng quà sẽ xuất hiện trong hàng chờ tại đây.'}
+                                Khi có khán giả trong hàng chờ hoặc tương tác được kích hoạt, 30 lượt gần nhất sẽ hiển thị tại đây.
                               </p>
                             </div>
                           )
@@ -2508,79 +2889,154 @@ Quy tắc:
                         )
                       })()}
                     </div>
+                  ) : (
+                    <div className='flex min-h-0 flex-1 flex-col'>
+                      <div className='mb-2.5 flex items-center justify-between border-b border-slate-800 pb-2'>
+                        <h3 className='text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5'>
+                          <span>💬 Nhật Ký Tương Tác ({filteredLogs.length})</span>
+                        </h3>
+                      </div>
+
+                      <div className='flex gap-1 mb-2.5 border-b border-slate-800/80 pb-2 text-[10px]'>
+                        {[
+                          { id: 'all', label: 'Tất cả' },
+                          { id: 'chat', label: 'Bình luận' },
+                          { id: 'gift', label: 'Quà tặng' },
+                          { id: 'member', label: 'Khán giả' },
+                        ].map((tab) => (
+                          <button
+                            key={tab.id}
+                            onClick={() => setLogFilter(tab.id as any)}
+                            className={`rounded px-2 py-0.5 font-semibold transition ${
+                              logFilter === tab.id
+                                ? 'bg-cyan-500 text-slate-950'
+                                : 'bg-slate-950 text-slate-400 hover:text-white'
+                            }`}
+                          >
+                            {tab.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className='flex-1 overflow-y-auto dark-scroll space-y-2 pr-1'>
+                        {filteredLogs.length === 0 ? (
+                          <div className='flex h-52 flex-col items-center justify-center text-center text-slate-500'>
+                            <span className='text-2xl mb-1'>💭</span>
+                            <p className='text-xs'>Chưa có hoạt động nào</p>
+                          </div>
+                        ) : (
+                          filteredLogs.map((log) => (
+                            <div
+                              key={log.id}
+                              className='rounded-lg bg-slate-950/70 p-2 text-xs border border-slate-800/60'
+                            >
+                              <div className='flex items-center justify-between text-[10px] text-slate-500 mb-0.5'>
+                                <span className='font-semibold text-slate-400 flex items-center gap-1 truncate'>
+                                  {log.type === 'gift' && '🎁'}
+                                  {log.type === 'chat' && '💬'}
+                                  {log.type === 'member' && '👋'}
+                                  {log.type === 'system' && '⚙️'}
+                                  {log.user}
+                                </span>
+                                <span className='shrink-0 ml-1'>{log.time}</span>
+                              </div>
+                              <p
+                                className={`text-xs wrap-break-word ${
+                                  log.type === 'gift'
+                                    ? 'text-amber-300 font-medium'
+                                    : log.type === 'system'
+                                    ? 'text-cyan-300'
+                                    : 'text-slate-200'
+                                }`}
+                              >
+                                {log.message}
+                              </p>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
                   )}
                 </div>
               </div>
 
-              {/* CỘT 3: Nhật ký tương tác Live (3 cols) */}
-              <div className='flex flex-col gap-3 lg:col-span-3 lg:overflow-hidden'>
-                <div className='flex flex-1 flex-col rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-md overflow-hidden'>
-                  <div className='mb-2.5 flex items-center justify-between border-b border-slate-800 pb-2'>
-                    <h3 className='text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5'>
-                      <span>💬 Nhật Ký Tương Tác ({filteredLogs.length})</span>
-                    </h3>
-                  </div>
+              {/* Divider 2: Resize Preview Column */}
+              {showPreview && (
+                <div
+                  role='separator'
+                  aria-label='Resize preview panel'
+                  onMouseDown={startResizeRight}
+                  className='mx-1.5 w-1.5 shrink-0 rounded-full bg-slate-800/90 hover:bg-cyan-500/70 cursor-col-resize transition'
+                  title='Kéo để thay đổi độ rộng cột Preview'
+                />
+              )}
 
-                  <div className='flex gap-1 mb-2.5 border-b border-slate-800/80 pb-2 text-[10px]'>
-                    {[
-                      { id: 'all', label: 'Tất cả' },
-                      { id: 'chat', label: 'Bình luận' },
-                      { id: 'gift', label: 'Quà tặng' },
-                      { id: 'member', label: 'Khán giả' },
-                    ].map((tab) => (
-                      <button
-                        key={tab.id}
-                        onClick={() => setLogFilter(tab.id as any)}
-                        className={`rounded px-2 py-0.5 font-semibold transition ${
-                          logFilter === tab.id
-                            ? 'bg-cyan-500 text-slate-950'
-                            : 'bg-slate-950 text-slate-400 hover:text-white'
-                        }`}
-                      >
-                        {tab.label}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className='flex-1 overflow-y-auto dark-scroll space-y-2 pr-1'>
-                    {filteredLogs.length === 0 ? (
-                      <div className='flex h-52 flex-col items-center justify-center text-center text-slate-500'>
-                        <span className='text-2xl mb-1'>💭</span>
-                        <p className='text-xs'>Chưa có hoạt động nào</p>
+              {/* CỘT 3: Preview Embedded */}
+              {showPreview && (
+                <div
+                  style={{ width: `${previewWidth}px`, minWidth: '280px', maxWidth: '850px' }}
+                  className='flex shrink-0 select-text'
+                >
+                  <div className='flex min-h-0 w-full flex-col rounded-2xl border border-cyan-500/20 bg-slate-900/80 p-3 shadow-md'>
+                    <div className='mb-2.5 flex items-center justify-between border-b border-slate-800 pb-2'>
+                      <div className='flex items-center gap-2'>
+                        <h3 className='text-xs font-bold uppercase tracking-wider text-cyan-300'>👁️ Preview Live</h3>
+                        <span className='rounded-full bg-slate-950 px-2 py-0.5 text-[10px] text-slate-300 border border-slate-800'>
+                          key: {currentSession.streamKey}
+                        </span>
                       </div>
-                    ) : (
-                      filteredLogs.map((log) => (
-                        <div
-                          key={log.id}
-                          className='rounded-lg bg-slate-950/70 p-2 text-xs border border-slate-800/60'
+
+                      <div className='flex items-center gap-1.5'>
+                        <button
+                          type='button'
+                          onClick={() => setIframeKey((k) => k + 1)}
+                          className='rounded-lg border border-slate-700 bg-slate-950 px-2 py-0.5 text-[10px] font-semibold text-slate-300 hover:text-white cursor-pointer'
+                          title='Reload iframe preview'
                         >
-                          <div className='flex items-center justify-between text-[10px] text-slate-500 mb-0.5'>
-                            <span className='font-semibold text-slate-400 flex items-center gap-1 truncate'>
-                              {log.type === 'gift' && '🎁'}
-                              {log.type === 'chat' && '💬'}
-                              {log.type === 'member' && '👋'}
-                              {log.type === 'system' && '⚙️'}
-                              {log.user}
-                            </span>
-                            <span className='shrink-0 ml-1'>{log.time}</span>
-                          </div>
-                          <p
-                            className={`text-xs wrap-break-word ${
-                              log.type === 'gift'
-                                ? 'text-amber-300 font-medium'
-                                : log.type === 'system'
-                                ? 'text-cyan-300'
-                                : 'text-slate-200'
-                            }`}
-                          >
-                            {log.message}
-                          </p>
-                        </div>
-                      ))
-                    )}
+                          Reload
+                        </button>
+                        <button
+                          type='button'
+                          onClick={() => openObsPreview()}
+                          className='rounded-lg border border-cyan-500/40 bg-cyan-950/40 px-2 py-0.5 text-[10px] font-semibold text-cyan-300 hover:bg-cyan-900/60 cursor-pointer'
+                          title='Mở preview ở tab ngoài'
+                        >
+                          Tab ngoài
+                        </button>
+                        <button
+                          type='button'
+                          onClick={() => {
+                            setShowPreview(false)
+                            // Force next mount to establish a new websocket session cleanly.
+                            setIframeKey((k) => k + 1)
+                          }}
+                          className='rounded-lg border border-slate-700 bg-slate-950 px-2 py-0.5 text-[10px] font-semibold text-slate-400 hover:text-white cursor-pointer'
+                          title='Ẩn cột này và đóng websocket của preview nhúng'
+                        >
+                          Ẩn
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className='mb-2 flex items-center justify-between text-[10px]'>
+                      <span className='text-slate-400'>Khi ẩn cột này, iframe sẽ unmount để đóng socket thật.</span>
+                      <span className={`font-semibold ${hasActivePreview ? 'text-emerald-400' : 'text-slate-500'}`}>
+                        {hasActivePreview ? `Socket: ${activePreviewClients} client` : 'Socket: chưa có'}
+                      </span>
+                    </div>
+
+                    <div className='min-h-0 flex-1 overflow-hidden rounded-xl border border-slate-800 bg-slate-950'>
+                      <iframe
+                        key={`${currentSession.streamKey}_${iframeKey}`}
+                        src={getObsUrl(currentSession)}
+                        title={`preview_${currentSession.streamKey}`}
+                        className='h-full w-full border-0'
+                        allow='autoplay'
+                      />
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
             </div>
           </div>
         )}
@@ -3107,7 +3563,7 @@ Quy tắc:
                     <div className='space-y-3 rounded-xl border border-emerald-500/30 bg-slate-950/70 p-3.5'>
                       <div className='font-bold text-emerald-300 flex items-center justify-between text-xs'>
                         <span>🌐 Cấu Hình Custom Audio Endpoint</span>
-                        <span className='text-[10px] text-slate-400 font-normal'>Tự động fallback về Google TTS nếu lỗi</span>
+                        <span className='text-[10px] text-amber-400/80 font-normal'>Không fallback khi lỗi</span>
                       </div>
 
                       <div className='space-y-1'>

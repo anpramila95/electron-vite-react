@@ -2,6 +2,7 @@ import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
 import { WebSocketServer, WebSocket } from 'ws'
+import { EdgeTTS } from 'node-edge-tts'
 import { db } from './db'
 
 export interface ServerInstance {
@@ -45,78 +46,25 @@ const MIME_TYPES: Record<string, string> = {
   '.aac': 'audio/aac',
 }
 
-// Microsoft Edge TTS protocol client
+// Microsoft Edge TTS client using node-edge-tts (bypass 403 blocks)
 async function fetchEdgeTTS(text: string, voice = 'vi-VN-HoaiMyNeural', speed = 1.0): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const ws = new (WebSocket as any)(
-      'wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=6A5AA1D4EAFF4E9FB37E23D68491D6F4',
-      {
-        headers: {
-          'Origin': 'chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold',
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0',
-        },
-      }
-    )
-
-    const audioChunks: Buffer[] = []
-    const timeout = setTimeout(() => {
-      try {
-        ws.close()
-      } catch {}
-      reject(new Error('Edge TTS timeout'))
-    }, 12000)
-
-    ws.on('open', () => {
-      const configMsg =
-        'Content-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n' +
-        JSON.stringify({
-          context: {
-            synthesis: {
-              audio: {
-                metadataoptions: { sentenceBoundaryEnabled: 'false', wordBoundaryEnabled: 'false' },
-                outputFormat: 'audio-24khz-48kbitrate-mono-mp3',
-              },
-            },
-          },
-        })
-      ws.send(configMsg)
-
-      const ratePct = speed !== 1.0 ? `${Math.round((speed - 1.0) * 100)}%` : '+0%'
-      const ssmlMsg =
-        `X-RequestId:${Math.random().toString(36).slice(2)}\r\n` +
-        'Content-Type:application/ssml+xml\r\nPath:ssml\r\n\r\n' +
-        `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='vi-VN'>` +
-        `<voice name='${voice || 'vi-VN-HoaiMyNeural'}'><prosody rate='${ratePct}'>${text}</prosody></voice></speak>`
-      ws.send(ssmlMsg)
-    })
-
-    ws.on('message', (data: any, isBinary: boolean) => {
-      if (isBinary) {
-        const buf = Buffer.isBuffer(data) ? data : Buffer.from(data)
-        if (buf.length > 2) {
-          const headerLen = buf.readUInt16BE(0)
-          if (buf.length > 2 + headerLen) {
-            audioChunks.push(buf.subarray(2 + headerLen))
-          }
-        }
-      } else {
-        const str = data.toString()
-        if (str.includes('Path:turn.end')) {
-          clearTimeout(timeout)
-          try {
-            ws.close()
-          } catch {}
-          resolve(Buffer.concat(audioChunks))
-        }
-      }
-    })
-
-    ws.on('error', (err: any) => {
-      clearTimeout(timeout)
-      reject(err)
-    })
+  const ratePct = speed !== 1.0 ? `${Math.round((speed - 1.0) * 100)}%` : 'default'
+  const tts = new EdgeTTS({
+    voice: voice || 'vi-VN-HoaiMyNeural',
+    lang: voice?.startsWith('vi') ? 'vi-VN' : 'en-US',
+    rate: ratePct,
+    timeout: 10000,
   })
+  const chunks: Buffer[] = []
+  for await (const chunk of tts.streamAudio(text)) {
+    if (Buffer.isBuffer(chunk)) {
+      chunks.push(chunk)
+    }
+  }
+  if (chunks.length === 0) {
+    throw new Error('Edge TTS returned empty audio')
+  }
+  return Buffer.concat(chunks)
 }
 
 export function startLocalServer(publicDir: string, defaultPort = 3210): Promise<ServerInstance> {
@@ -401,8 +349,13 @@ export function startLocalServer(publicDir: string, defaultPort = 3210): Promise
           }
         }
 
-        // 3. Custom Remote Audio Endpoint (User specified HTTP/S URL)
-        if (engine === 'custom_remote' && aiCfg.ttsBaseUrl) {
+        // 3. Custom Remote Audio Endpoint (User specified HTTP/S URL) - No fallback
+        if (engine === 'custom_remote') {
+          if (!aiCfg.ttsBaseUrl) {
+            res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
+            res.end(JSON.stringify({ error: 'Missing Custom Audio Endpoint URL' }))
+            return
+          }
           try {
             const method = (aiCfg.ttsCustomMethod || 'POST').toUpperCase()
             const headers: Record<string, string> = {}
@@ -432,19 +385,27 @@ export function startLocalServer(publicDir: string, defaultPort = 3210): Promise
               })
             }
 
-            if (remoteResp.ok) {
-              const arrayBuf = await remoteResp.arrayBuffer()
-              res.writeHead(200, {
-                'Content-Type': remoteResp.headers.get('content-type') || 'audio/mpeg',
-                'Content-Length': arrayBuf.byteLength,
-                'Cache-Control': 'public, max-age=7200',
-                'Access-Control-Allow-Origin': '*',
-              })
-              res.end(Buffer.from(arrayBuf))
+            if (!remoteResp.ok) {
+              const errBody = await remoteResp.text().catch(() => '')
+              res.writeHead(remoteResp.status, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
+              res.end(JSON.stringify({ error: `Custom endpoint error ${remoteResp.status}: ${errBody || remoteResp.statusText}` }))
               return
             }
+
+            const arrayBuf = await remoteResp.arrayBuffer()
+            res.writeHead(200, {
+              'Content-Type': remoteResp.headers.get('content-type') || 'audio/mpeg',
+              'Content-Length': arrayBuf.byteLength,
+              'Cache-Control': 'public, max-age=7200',
+              'Access-Control-Allow-Origin': '*',
+            })
+            res.end(Buffer.from(arrayBuf))
+            return
           } catch (err: any) {
-            console.warn('[TTS Server] Custom remote TTS failed, falling back to Google:', err.message)
+            console.error('[TTS Server] Custom remote TTS failed:', err.message)
+            res.writeHead(502, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
+            res.end(JSON.stringify({ error: `Custom remote TTS failed: ${err.message}` }))
+            return
           }
         }
 
@@ -550,7 +511,8 @@ export function startLocalServer(publicDir: string, defaultPort = 3210): Promise
       const message = typeof data === 'string' ? data : JSON.stringify(data)
       wss.clients.forEach((client: WebSocket) => {
         const clientKey = socketStreamKeys.get(client)
-        if (client.readyState === WebSocket.OPEN && (!clientKey || clientKey === streamKey)) {
+        // Cách ly tuyệt đối: Chỉ gửi đúng client có cùng streamKey (tránh tràn âm thanh sang phiên live khác)
+        if (client.readyState === WebSocket.OPEN && clientKey && clientKey === streamKey) {
           client.send(message)
         }
       })

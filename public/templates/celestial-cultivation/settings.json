@@ -1,0 +1,90 @@
+{
+  "id": "celestial_cultivation",
+  "name": "Độ Kiếp Phi Thăng - Tu Tiên Thiên Đình",
+  "description": "Đạo trường Tu Tiên cổ phong Trung Hoa. Khán giả ngự đài sen hấp thu linh khí, tặng quà triệu hồi Cửu Trọng Thiên Lôi đột phá cảnh giới Tiên Đế.",
+  "icon": "🐉",
+  "badge": "Canvas 2D & VFX",
+  "features": [
+    "Hệ thống 8 Cảnh Giới Tu Tiên",
+    "Hiệu ứng Cửu Thiên Lôi Kiếp & Kim Long",
+    "Vinh danh Tiên Đế Chí Tôn (Top 1)",
+    "Tụ Linh Trận kích hoạt Mưa Tiên Đơn"
+  ],
+  "settingsSchema": [
+    {
+      "key": "cultivationSpeed",
+      "label": "Tốc độ hấp thu linh khí",
+      "type": "range",
+      "defaultValue": 1.5,
+      "min": 0.5,
+      "max": 5.0,
+      "step": 0.5,
+      "unit": "×"
+    },
+    {
+      "key": "realmTheme",
+      "label": "Bối cảnh Tiên Giới",
+      "type": "select",
+      "defaultValue": "golden_palace",
+      "options": [
+        { "label": "Kim Quyết Thiên Cung (Vàng Hoàng Gia)", "value": "golden_palace" },
+        { "label": "Bích Đào Tiên Cảnh (Ngọc Bích)", "value": "jade_paradise" },
+        { "label": "Tử Vi Tinh Hà (Tím Huyền Ảo)", "value": "purple_void" }
+      ]
+    },
+    {
+      "key": "goalTarget",
+      "label": "Mục tiêu Linh Khí mở Mưa Tiên Đơn",
+      "type": "range",
+      "defaultValue": 100,
+      "min": 20,
+      "max": 500,
+      "step": 20,
+      "unit": " Linh thạch"
+    },
+    {
+      "key": "showComments",
+      "label": "Hiển thị Pháp Chỉ (Live Chat)",
+      "type": "boolean",
+      "defaultValue": true
+    },
+    {
+      "key": "showTopUsers",
+      "label": "Hiển thị Bảng Phong Thần (Top Tu Vi)",
+      "type": "boolean",
+      "defaultValue": true
+    },
+    {
+      "key": "showGifts",
+      "label": "Hiển thị hiệu ứng Thiên Lôi & Pháp Bảo",
+      "type": "boolean",
+      "defaultValue": true
+    }
+  ],
+  "actions": [
+    {
+      "id": "trigger_tribulation",
+      "label": "GIÁNG THIÊN LÔI KIẾP",
+      "icon": "⚡",
+      "variant": "accent",
+      "actionKey": "trigger_tribulation",
+      "group": "main"
+    },
+    {
+      "id": "activate_spirit_rain",
+      "label": "KÍCH HOẠT MƯA TIÊN ĐƠN",
+      "icon": "✨",
+      "variant": "primary",
+      "actionKey": "activate_spirit_rain",
+      "group": "main"
+    },
+    {
+      "id": "reset_realm",
+      "label": "Tái tạo Kỷ Nguyên (Reset)",
+      "icon": "🔄",
+      "variant": "secondary",
+      "actionKey": "reset_realm",
+      "group": "main"
+    }
+  ]
+}

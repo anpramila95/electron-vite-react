@@ -151,8 +151,19 @@
       }
     }
 
+    let lastPlayedTtsId = '';
+    let lastPlayedTtsText = '';
+    let lastPlayedTtsTime = 0;
+
     function playTtsAudio(msg) {
       if (!msg || !msg.text) return;
+      const now = Date.now();
+      if (msg.id && msg.id === lastPlayedTtsId) return;
+      if (msg.text === lastPlayedTtsText && (now - lastPlayedTtsTime) < 2500) return;
+      lastPlayedTtsId = msg.id || '';
+      lastPlayedTtsText = msg.text;
+      lastPlayedTtsTime = now;
+
       const shouldDuck = msg.duckMusic !== false;
 
       try {

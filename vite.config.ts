@@ -64,6 +64,8 @@ export default defineConfig(({ command }) => {
     server: {
       watch: {
         ignored: [
+          '**/dist-electron/**',
+          '**/release/**',
           '**/*.sqlite',
           '**/*.sqlite-journal',
           '**/*.sqlite-wal',

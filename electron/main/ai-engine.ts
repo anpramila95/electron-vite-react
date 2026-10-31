@@ -101,6 +101,22 @@ Quy tắc:
 - Xưng hô 'Quán nhỏ' hoặc 'Bartender'.
 - Cảm ơn khách order đồ uống, chúc khán giả buổi tối bình yên.`,
 
+  buddha_temple_3d: `Bạn là Người Dẫn Lễ trang nghiêm và thanh tịnh tại Chùa Online trên TikTok Live.
+Nhiệm vụ: Chào đón phật tử, cảm tạ công đức dâng lễ cúng dường và chúc phúc thiện nam tín nữ.
+Phong cách: Từ bi, thanh tịnh, trang nghiêm, ấm áp, xưng 'Chùa' hoặc 'Ban hộ tự', gọi khán giả là 'Phật tử' hoặc 'Thiện nam/Tín nữ' hoặc tên người xem.
+Quy tắc:
+- Trả lời đúng 1 câu ngắn gọn, ý nghĩa (dưới 22 từ).
+- Tri ân công đức người tặng quà cúng dường, cầu chúc bình an, phúc thọ an khang.
+- Tuyệt đối không nhắc tới in ấn 3D hay máy móc.`,
+
+  'buddha-temple-3d': `Bạn là Người Dẫn Lễ trang nghiêm và thanh tịnh tại Chùa Online trên TikTok Live.
+Nhiệm vụ: Chào đón phật tử, cảm tạ công đức dâng lễ cúng dường và chúc phúc thiện nam tín nữ.
+Phong cách: Từ bi, thanh tịnh, trang nghiêm, ấm áp, xưng 'Chùa' hoặc 'Ban hộ tự', gọi khán giả là 'Phật tử' hoặc 'Thiện nam/Tín nữ' hoặc tên người xem.
+Quy tắc:
+- Trả lời đúng 1 câu ngắn gọn, ý nghĩa (dưới 22 từ).
+- Tri ân công đức người tặng quà cúng dường, cầu chúc bình an, phúc thọ an khang.
+- Tuyệt đối không nhắc tới in ấn 3D hay máy móc.`,
+
   default: `Bạn là Trợ lý AI đồng hành cùng streamer trên TikTok Live.
 Nhiệm vụ: Tương tác ngắn gọn, dí dỏm với bình luận và quà tặng của khán giả.
 Phong cách: Duyên dáng, thông minh, vui tươi, xưng Em gọi Bạn/Anh/Chị.
@@ -111,8 +127,8 @@ Quy tắc:
 }
 
 const DEFAULT_CONFIG: AIEngineConfig = {
-  enabled: true,
-  provider: 'custom',
+  enabled: false, // Tắt AI tự động trả lời tự do, chuyển sang đọc theo hàng chờ chuẩn format
+  provider: 'rule_based',
   apiKey: '',
   baseUrl: 'https://api.openai.com/v1',
   model: 'gpt-4o-mini',
@@ -319,7 +335,7 @@ Yêu cầu:
       this.timer = null
     }
 
-    if (!this.config.enabled && !this.config.ttsEnabled) {
+    if (!this.config.enabled || !this.config.ttsEnabled) {
       return
     }
 
@@ -334,16 +350,7 @@ Yêu cầu:
       clearInterval(this.greetingTimer)
       this.greetingTimer = null
     }
-
-    const minutes = Number(this.config.greetingInterval) || 0
-    const text = (this.config.greetingText || '').trim()
-
-    if (minutes > 0 && text && this.config.ttsEnabled) {
-      const intervalMs = Math.max(1, minutes) * 60 * 1000
-      this.greetingTimer = setInterval(() => {
-        this.speakGreeting()
-      }, intervalMs)
-    }
+    // Legacy global greeting disabled: Greetings are now managed per-session in LiveSessionInstance
   }
 
   public speakGreeting() {
@@ -372,7 +379,7 @@ Yêu cầu:
   // Push incoming event from TikTok stream or faker
   public handleLog(templateId: string, log: DbLogItem, streamKey?: string) {
     if (templateId) this.activeTemplateId = templateId
-    if (!this.config.enabled && !this.config.ttsEnabled) return
+    if (!this.config.enabled || !this.config.ttsEnabled) return
     if (!log || log.type === 'system') return
 
     const message = (log.message || '').trim()
@@ -406,7 +413,7 @@ Yêu cầu:
   private async processBatch(activeTemplateId = 'print_booth_3d') {
     if (this.isProcessing) return
     if (this.pendingEvents.length === 0) return
-    if (!this.config.enabled && !this.config.ttsEnabled) return
+    if (!this.config.enabled || !this.config.ttsEnabled) return
 
     this.isProcessing = true
     try {
@@ -620,9 +627,29 @@ Yêu cầu:
         }
         return ''
 
+      case 'buddha_temple_3d':
+      case 'buddha-temple-3d':
+        if (gift) {
+          const templeGifts = [
+            `Tri ân công đức phật tử ${name} đã phát tâm cúng dường, nguyện cầu chư Phật gia hộ gia đạo luôn bình an!`,
+            `Cảm tạ tấm lòng của ${name} đã dâng lễ cúng dường, chúc bạn và gia đình thân tâm thường an lạc!`,
+            `Công đức vô lượng từ ${name}, cầu chúc bạn vạn sự cát tường, sở cầu như ý!`,
+            `Cảm ơn phật tử ${name} đã gieo duyên lành nơi cửa Phật, chúc bạn phúc thọ dồi dào!`,
+          ]
+          return templeGifts[Math.floor(Math.random() * templeGifts.length)]
+        }
+        if (chat) {
+          const templeChats = [
+            `A Di Đà Phật, chào mừng phật tử ${name} đã ghé thăm chánh điện đạo tràng hôm nay!`,
+            `Kính chúc phật tử ${name} và gia đình một ngày an lành, thân tâm thanh tịnh!`,
+            `Cảm ơn ${name} đã cùng đại chúng tịnh tâm hướng Phật, nguyện vạn điều tốt lành đến với bạn!`,
+          ]
+          return templeChats[Math.floor(Math.random() * templeChats.length)]
+        }
+        return ''
+
       case 'print_booth_3d':
       case 'print_booth_lite':
-      default:
         if (gift) {
           const boothGifts = [
             `Cảm ơn bạn ${name} đã gửi quà VIP, avatar của bạn sẽ được ưu tiên in lát cắt ngay lập tức!`,
@@ -638,6 +665,25 @@ Yêu cầu:
             `Cảm ơn bạn ${name} đã tương tác, chúc bạn sớm nhận được tác phẩm avatar độc quyền!`,
           ]
           return boothChats[Math.floor(Math.random() * boothChats.length)]
+        }
+        return ''
+
+      default:
+        if (gift) {
+          const defaultGifts = [
+            `Cảm ơn bạn ${name} rất nhiều đã gửi món quà ủng hộ buổi live hôm nay nhé!`,
+            `Cảm ơn món quà tuyệt vời từ bạn ${name}, chúc bạn một ngày tràn đầy niềm vui!`,
+            `Cảm ơn ${name} đã tiếp thêm năng lượng cho phiên live, chúc bạn luôn may mắn nhé!`,
+          ]
+          return defaultGifts[Math.floor(Math.random() * defaultGifts.length)]
+        }
+        if (chat) {
+          const defaultChats = [
+            `Chào mừng bạn ${name} đã đến với buổi livestream, chúc bạn xem live vui vẻ nhé!`,
+            `Cảm ơn bạn ${name} đã tương tác và trò chuyện cùng buổi live nha!`,
+            `Chào bạn ${name}, rất vui được gặp bạn trong phiên live hôm nay!`,
+          ]
+          return defaultChats[Math.floor(Math.random() * defaultChats.length)]
         }
         return ''
     }

@@ -22,6 +22,12 @@ export interface StreamSettings {
   rotate?: boolean
   greetingText?: string
   greetingInterval?: number
+  ttsQueueEnabled?: boolean
+  ttsVipOnly?: boolean
+  ttsWishesText?: string
+  ttsGiftPrefix?: string
+  ttsFilterBannedWords?: boolean
+  ttsBannedWordsText?: string
   [key: string]: any
 }
 
@@ -118,6 +124,28 @@ export class LiveSessionInstance {
     return this.userScores.get(uniqueId)?.score || 0
   }
 
+  public broadcastStreamEvent(
+    event: 'CHAT' | 'GIFT' | 'MEMBER' | 'LIKE' | 'SHARE' | 'FOLLOW',
+    payload: {
+      user: {
+        id?: string
+        uniqueId: string
+        name: string
+        avatar: string
+      }
+      data: any
+    },
+  ) {
+    this.onBroadcast('stream_event', {
+      sessionKey: this.streamKey,
+      templateId: this.templateId,
+      event,
+      timestamp: Date.now(),
+      user: payload.user,
+      data: payload.data,
+    })
+  }
+
   public getAllScores() {
     return Array.from(this.userScores.values()).sort((a, b) => b.score - a.score)
   }
@@ -131,7 +159,7 @@ export class LiveSessionInstance {
       score: 0,
       isVip: false,
     }
-    current.score += addPoints
+    current.score = Math.round((current.score + addPoints) * 100) / 100
     if (name) current.name = name
     if (avatarUrl) current.avatarUrl = avatarUrl
     if (isVip) current.isVip = true
@@ -278,12 +306,16 @@ export class LiveSessionInstance {
       const comment = await this.aiEngine.getAiBotComment(this.templateId, this.name)
       if (!comment) return
 
-      this.addUserScore(uniqueId, name, photoUrl, 3, false)
+      this.addUserScore(uniqueId, name, photoUrl, 0.3, false)
+      this.broadcastStreamEvent('CHAT', {
+        user: { uniqueId, name, avatar: photoUrl },
+        data: { comment },
+      })
       this.addToQueue({
         uniqueId,
         name,
         photoUrl,
-        priority: 30,
+        priority: 10,
         isVip: false,
         source: 'chat',
         comment,
@@ -292,24 +324,37 @@ export class LiveSessionInstance {
     } else if (roll < 0.90) {
       const gift = BOT_GIFTS[Math.floor(Math.random() * BOT_GIFTS.length)]
       const isBig = gift.diamonds >= (this.tiktokConfig.bigGiftThreshold || 10)
-      this.addUserScore(uniqueId, name, photoUrl, gift.diamonds * 10, isBig)
+      this.addUserScore(uniqueId, name, photoUrl, gift.diamonds, isBig)
+      this.broadcastStreamEvent('GIFT', {
+        user: { uniqueId, name, avatar: photoUrl },
+        data: {
+          giftName: gift.name,
+          diamonds: gift.diamonds,
+          unitDiamonds: gift.diamonds,
+          repeatCount: 1,
+        },
+      })
       this.addToQueue({
         uniqueId,
         name,
         photoUrl,
-        priority: isBig ? 10000 + gift.diamonds : 2000 + gift.diamonds,
+        priority: isBig ? 50000 + gift.diamonds : 5000 + gift.diamonds,
         isVip: isBig,
         source: 'gift',
         giftName: `${gift.name} (${gift.diamonds} xu)`,
       })
       this.addLog('gift', name, `Tặng ${gift.name} (${gift.diamonds} xu) 🎁`, photoUrl)
     } else {
-      this.addUserScore(uniqueId, name, photoUrl, 1, false)
+      this.addUserScore(uniqueId, name, photoUrl, 0.1, false)
+      this.broadcastStreamEvent('MEMBER', {
+        user: { uniqueId, name, avatar: photoUrl },
+        data: {},
+      })
       this.addToQueue({
         uniqueId,
         name,
         photoUrl,
-        priority: 10,
+        priority: 1,
         isVip: false,
         source: 'member',
       })
@@ -319,6 +364,10 @@ export class LiveSessionInstance {
 
   // Periodic Greeting Engine per session
   private greetingTimer: NodeJS.Timeout | null = null
+
+  // Queue-based TTS Reader engine per session (đọc lần lượt tên + quà + chúc rồi xóa khỏi queue)
+  private queueTtsTimer: NodeJS.Timeout | null = null
+  private isProcessingQueueTts = false
 
   public restartGreetingLoop() {
     if (this.greetingTimer) {
@@ -334,6 +383,174 @@ export class LiveSessionInstance {
       this.greetingTimer = setInterval(() => {
         this.triggerGreeting()
       }, intervalMs)
+    }
+  }
+
+  public restartQueueTtsLoop() {
+    if (this.queueTtsTimer) {
+      clearTimeout(this.queueTtsTimer)
+      this.queueTtsTimer = null
+    }
+
+    if (this.settings.ttsQueueEnabled && this.status === 'running') {
+      this.scheduleNextQueueTts(1500)
+    }
+  }
+
+  private scheduleNextQueueTts(delayMs = 2000) {
+    if (this.queueTtsTimer) clearTimeout(this.queueTtsTimer)
+    this.queueTtsTimer = setTimeout(() => {
+      this.processNextQueueItemTts()
+    }, delayMs)
+  }
+
+  private getRandomWish(userName: string): string {
+    const rawWishes = (this.settings.ttsWishesText || '').trim()
+    let wishes: string[] = []
+    if (rawWishes) {
+      wishes = rawWishes.split('\n').map((w) => w.trim()).filter(Boolean)
+    }
+
+    if (wishes.length === 0) {
+      const isTemple = this.templateId.includes('buddha')
+      wishes = isTemple
+        ? [
+            'chúc bạn vạn sự như ý, thân tâm thường an lạc!',
+            'nguyện chúc bạn luôn bình an, cát tường như ý!',
+            'cầu chúc bạn dồi dào sức khỏe, phúc lộc đủ đầy!',
+            'chúc bạn thuận buồm xuôi gió, muôn điều may mắn!',
+            'chúc bạn công việc hanh thông, tài lộc dồi dào!',
+          ]
+        : [
+            'chúc bạn xem live vui vẻ và tràn đầy may mắn!',
+            'chúc bạn ngày mới thuận buồm xuôi gió!',
+            'chúc bạn vạn sự cát tường, công việc hanh thông!',
+          ]
+    }
+
+    const template = wishes[Math.floor(Math.random() * wishes.length)]
+    return template.replace(/{name}/gi, userName)
+  }
+
+  private hasBannedWord(text: string): boolean {
+    if (!text || !this.settings.ttsFilterBannedWords) return false
+    const lower = text.toLowerCase()
+    const defaultBanned = [
+      'đụ', 'địt', 'lồn', 'cặc', 'buồi', 'đĩ', 'chó', 'súc vật', 'ngu',
+      'óc chó', 'mẹ mày', 'bố mày', 'dcm', 'đcm', 'vcl', 'cl', 'cc',
+      'lừa đảo', 'scam', 'dm', 'dkm', 'vl', 'đéo', 'đếch', 'mẹ kiếp'
+    ]
+    const customBanned = (this.settings.ttsBannedWordsText || '')
+      .split(/[,\n]/)
+      .map((w) => w.trim().toLowerCase())
+      .filter(Boolean)
+    const allBanned = [...defaultBanned, ...customBanned]
+    return allBanned.some((word) => {
+      // Tìm từ theo ranh giới từ hoặc chuỗi con
+      const regex = new RegExp(`(^|\\s|[.,!?;])${word}($|\\s|[.,!?;])`, 'i')
+      return regex.test(lower) || lower.includes(word)
+    })
+  }
+
+  // Khi máy in 3D bắt đầu in thành viên VIP: phát TTS đọc vinh danh VIP
+  public onVipPrinting(user: { id?: any; name?: string; isVip?: boolean; giftName?: string; comment?: string }) {
+    if (!this.settings.ttsQueueEnabled || this.status !== 'running') return
+    const userName = (user.name || 'Khán giả VIP').trim()
+    if (this.hasBannedWord(userName)) return
+
+    const wish = this.getRandomWish(userName)
+    let speakText = ''
+    if (user.giftName) {
+      const cleanGift = user.giftName.replace(/\(\d+\s*xu\)/gi, '').trim()
+      speakText = `VIP ${userName} tặng ${cleanGift}, ${wish}`
+    } else if (user.comment && !this.hasBannedWord(user.comment)) {
+      speakText = `VIP ${userName} nhắn ${user.comment}, ${wish}`
+    } else {
+      speakText = `Đang in tác phẩm cho VIP ${userName}, ${wish}`
+    }
+
+    this.onBroadcast('stream_greeting', {
+      sessionKey: this.streamKey,
+      text: speakText,
+      templateId: this.templateId,
+    })
+  }
+
+  private async processNextQueueItemTts() {
+    if (this.isProcessingQueueTts || !this.settings.ttsQueueEnabled || this.status !== 'running') {
+      return
+    }
+
+    const queue = db.getQueue(this.id)
+    if (queue.length === 0) {
+      this.scheduleNextQueueTts(3000)
+      return
+    }
+
+    // Lọc theo điều kiện VIP nếu có bật ttsVipOnly
+    const candidates = this.settings.ttsVipOnly
+      ? queue.filter((q) => q.is_vip === 1)
+      : queue
+
+    if (candidates.length === 0) {
+      this.scheduleNextQueueTts(3000)
+      return
+    }
+
+    // Lấy người ưu tiên cao nhất, người đến trước
+    const item = candidates[0]
+    this.isProcessingQueueTts = true
+
+    try {
+      const userName = (item.name || 'bạn').trim()
+      // Nếu tên chứa từ cấm -> bỏ qua luôn người này
+      if (this.hasBannedWord(userName)) {
+        this.removeFromQueue(item.id)
+        this.isProcessingQueueTts = false
+        this.scheduleNextQueueTts(500)
+        return
+      }
+
+      const isTemple = this.templateId.includes('buddha')
+      const defaultPrefix = isTemple ? 'vừa cúng dường' : 'vừa tặng'
+      const prefix = (this.settings.ttsGiftPrefix || defaultPrefix).trim()
+      const wish = this.getRandomWish(userName)
+
+      let speakText = ''
+      if (item.gift_name) {
+        const cleanGift = item.gift_name.replace(/\(\d+\s*xu\)/gi, '').trim()
+        speakText = `${userName} ${prefix} ${cleanGift}, ${wish}`
+      } else if (item.comment) {
+        // Lọc bình luận chứa từ cấm: nếu có từ cấm thì KHÔNG đọc nội dung bình luận
+        if (this.hasBannedWord(item.comment)) {
+          speakText = `Chào ${userName}, ${wish}`
+        } else {
+          speakText = `${userName} nhắn ${item.comment}, ${wish}`
+        }
+      } else {
+        speakText = `Chào ${userName}, ${wish}`
+      }
+
+      // Phát TTS vào tab của phiên live
+      this.onBroadcast('stream_greeting', {
+        sessionKey: this.streamKey,
+        text: speakText,
+        templateId: this.templateId,
+      })
+
+      // Ước tính thời gian phát âm (trung bình ~65ms/ký tự + 1.8s buffer)
+      const readDurationMs = Math.max(2500, Math.min(15000, speakText.length * 75 + 1800))
+
+      setTimeout(() => {
+        // Đọc xong -> xóa khỏi hàng chờ
+        this.removeFromQueue(item.id)
+        this.isProcessingQueueTts = false
+        // Tiếp tục đọc người kế tiếp sau 1.2s nghỉ
+        this.scheduleNextQueueTts(1200)
+      }, readDurationMs)
+    } catch (_) {
+      this.isProcessingQueueTts = false
+      this.scheduleNextQueueTts(3000)
     }
   }
 
@@ -377,28 +594,28 @@ export class LiveSessionInstance {
     try {
       this.tiktokConfig = {
         username: record.username || '',
-        onJoin: true,
+        onJoin: false,
         onChat: true,
         chatKeywordOnly: false,
         keyword: 'in, in anh, ve, avatar',
         onGift: true,
         bigGiftThreshold: 10,
         onLike: false,
-        onShare: true,
+        onShare: false,
         allowDuplicates: false,
         ...JSON.parse(record.tiktok_config_json),
       }
     } catch {
       this.tiktokConfig = {
         username: record.username || '',
-        onJoin: true,
+        onJoin: false,
         onChat: true,
         chatKeywordOnly: false,
         keyword: 'in, in anh, ve, avatar',
         onGift: true,
         bigGiftThreshold: 10,
         onLike: false,
-        onShare: true,
+        onShare: false,
         allowDuplicates: false,
       }
     }
@@ -437,6 +654,7 @@ export class LiveSessionInstance {
     this.status = 'running'
     this.retryCount = 0
     this.restartGreetingLoop()
+    this.restartQueueTtsLoop()
 
     if (this.tiktokConfig.autoFaker !== false) {
       this.startAutoFaker()
@@ -526,9 +744,14 @@ export class LiveSessionInstance {
 
         this.addLog('chat', nickname, comment, avatar)
 
+        this.broadcastStreamEvent('CHAT', {
+          user: { id: data.user?.id, uniqueId, name: nickname, avatar },
+          data: { comment },
+        })
+
         if (this.tiktokConfig.onChat) {
-          // Cộng điểm: comment +3 điểm (khi bật tính năng onChat)
-          this.addUserScore(uniqueId, nickname, avatar, 3)
+          // Cộng điểm: comment +0.3 điểm (quy đổi tương đương xu)
+          this.addUserScore(uniqueId, nickname, avatar, 0.3)
 
           let shouldAdd = true
           if (this.tiktokConfig.chatKeywordOnly) {
@@ -546,7 +769,7 @@ export class LiveSessionInstance {
               uniqueId,
               name: nickname,
               photoUrl: avatar,
-              priority: 30, // Priority cho bình luận
+              priority: 10, // Priority thường cho bình luận
               isVip: false,
               source: 'chat',
               comment,
@@ -555,9 +778,11 @@ export class LiveSessionInstance {
         }
       })
 
-      // 2. GIFT (Quà tặng thật)
       // 2. GIFT (Quà tặng từ khán giả)
       this.connection.on(WebcastEvent.GIFT, (data: any) => {
+        // Bỏ streak đang tăng dở, chỉ chốt khi combo kết thúc
+        if (data.gift?.combo && data.repeatEnd === 0) return
+
         this.lastMessageTime = Date.now()
         this.lastRealInteractionTime = Date.now()
         if (!this.isConnected) {
@@ -578,7 +803,7 @@ export class LiveSessionInstance {
           data.extendedGiftInfo?.diamondCount ||
           data.gift?.diamondCount ||
           (typeof data.diamondCount === 'number' ? data.diamondCount : 0) ||
-          (data.fanTicketCount ? Math.round(data.fanTicketCount / 2) : 0) ||
+          data.fanTicketCount ||
           1
         const repeat = data.repeatCount || data.comboCount || 1
         const totalDiamonds = unitDiamonds * repeat
@@ -590,14 +815,25 @@ export class LiveSessionInstance {
           avatar,
         )
 
+        this.broadcastStreamEvent('GIFT', {
+          user: { id: data.user?.id, uniqueId, name: nickname, avatar },
+          data: {
+            giftId: data.giftId,
+            giftName,
+            diamonds: totalDiamonds,
+            unitDiamonds,
+            repeatCount: repeat,
+          },
+        })
+
         if (this.tiktokConfig.onGift) {
           const isBigGift = totalDiamonds >= (this.tiktokConfig.bigGiftThreshold || 10)
-          // Cộng điểm: Tặng quà (tùy giá quà xu) * 10
-          const giftScore = totalDiamonds * 10
+          // 1 xu quà = 1 điểm chuẩn
+          const giftScore = totalDiamonds
           this.addUserScore(uniqueId, nickname, avatar, giftScore, isBigGift)
 
-          // Quà càng lớn priority càng cao vượt trội để lập tức lên #1 hàng chờ
-          const priority = isBigGift ? 10000 + totalDiamonds : 2000 + totalDiamonds
+          // Cắt hàng tức thì: Quà nhỏ = 5000+diamonds, Quà VIP lớn = 50000+diamonds
+          const priority = isBigGift ? 50000 + totalDiamonds : 5000 + totalDiamonds
 
           this.addToQueue({
             uniqueId,
@@ -626,15 +862,20 @@ export class LiveSessionInstance {
 
         this.addLog('member', nickname, 'đã tham gia xem Live 👋', avatar)
 
+        this.broadcastStreamEvent('MEMBER', {
+          user: { id: data.user?.id, uniqueId, name: nickname, avatar },
+          data: {},
+        })
+
         if (this.tiktokConfig.onJoin) {
-          // Mới tham gia: +1 điểm (khi bật onJoin)
-          this.addUserScore(uniqueId, nickname, avatar, 1)
+          // Mới tham gia: +0.1 điểm
+          this.addUserScore(uniqueId, nickname, avatar, 0.1)
 
           this.addToQueue({
             uniqueId,
             name: nickname,
             photoUrl: avatar,
-            priority: 10, // Priority cho người vừa vào xem
+            priority: 1, // Priority thấp cho người vừa vào xem
             isVip: false,
             source: 'member',
             comment: 'Vừa vào xem live',
@@ -675,15 +916,20 @@ export class LiveSessionInstance {
         }
         this.broadcastStats()
 
+        this.broadcastStreamEvent('LIKE', {
+          user: { id: data.user?.id, uniqueId, name: nickname, avatar },
+          data: { count: likeAdd, total: this.likeCount },
+        })
+
         if (this.tiktokConfig.onLike) {
-          // Like: +2 điểm (khi bật onLike)
-          this.addUserScore(uniqueId, nickname, avatar, 2)
+          // Like: +0.05 điểm mỗi đợt thả tim
+          this.addUserScore(uniqueId, nickname, avatar, 0.05)
 
           this.addToQueue({
             uniqueId,
             name: nickname,
             photoUrl: avatar,
-            priority: 20,
+            priority: 5,
             isVip: false,
             source: 'like',
             comment: 'Đã thả tim',
@@ -703,15 +949,20 @@ export class LiveSessionInstance {
 
         this.addLog('member', nickname, action, avatar)
 
+        this.broadcastStreamEvent(isShare ? 'SHARE' : 'FOLLOW', {
+          user: { id: data.user?.id, uniqueId, name: nickname, avatar },
+          data: { actionType: data.actionType },
+        })
+
         if (this.tiktokConfig.onShare && isShare) {
-          // Chia sẻ: +2 điểm (khi bật onShare)
-          this.addUserScore(uniqueId, nickname, avatar, 2)
+          // Chia sẻ: +0.2 điểm
+          this.addUserScore(uniqueId, nickname, avatar, 0.2)
 
           this.addToQueue({
             uniqueId,
             name: nickname,
             photoUrl: avatar,
-            priority: 25,
+            priority: 8,
             isVip: false,
             source: 'share',
             comment: 'Đã chia sẻ live',
@@ -850,12 +1101,69 @@ export class LiveSessionInstance {
       clearInterval(this.greetingTimer)
       this.greetingTimer = null
     }
+    if (this.queueTtsTimer) {
+      clearTimeout(this.queueTtsTimer)
+      this.queueTtsTimer = null
+    }
+    this.isProcessingQueueTts = false
     this.stopAutoFaker()
     this.cleanupConnection()
     this.status = 'stopped'
     this.saveToDb()
     this.addLog('system', 'Hệ thống', 'Đã dừng phiên Live')
     this.broadcastStatus()
+  }
+
+  public simulateGift(params: {
+    name?: string
+    giftName: string
+    diamonds: number
+    repeatCount?: number
+    photoUrl?: string
+  }) {
+    const nickname = params.name?.trim() || 'Khán giả Test'
+    const uniqueId = `sim_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+    const avatar = params.photoUrl || `https://i.pravatar.cc/150?img=${Math.floor(Math.random() * 70) + 1}`
+    const giftName = params.giftName || 'Hoa hồng'
+    const unitDiamonds = Math.max(1, Number(params.diamonds) || 1)
+    const repeat = Math.max(1, Number(params.repeatCount) || 1)
+    const totalDiamonds = unitDiamonds * repeat
+
+    this.addLog(
+      'gift',
+      nickname,
+      `Tặng ${repeat > 1 ? `${repeat}x ` : ''}${giftName} (${totalDiamonds} xu) 🎁`,
+      avatar,
+    )
+
+    this.broadcastStreamEvent('GIFT', {
+      user: { id: uniqueId, uniqueId, name: nickname, avatar },
+      data: {
+        giftId: `sim_${Date.now()}`,
+        giftName,
+        diamonds: totalDiamonds,
+        unitDiamonds,
+        repeatCount: repeat,
+      },
+    })
+
+    const isBigGift = totalDiamonds >= (this.tiktokConfig.bigGiftThreshold || 10)
+    const giftScore = totalDiamonds
+    this.addUserScore(uniqueId, nickname, avatar, giftScore, isBigGift)
+
+    const priority = isBigGift ? 50000 + totalDiamonds : 5000 + totalDiamonds
+
+    this.addToQueue({
+      uniqueId,
+      name: nickname,
+      photoUrl: avatar,
+      priority,
+      isVip: isBigGift,
+      source: 'gift',
+      giftName: `${repeat > 1 ? `${repeat}x ` : ''}${giftName}`,
+    })
+
+    return { success: true, nickname, giftName, totalDiamonds, isBigGift }
   }
 
   public addToQueue(item: {
@@ -919,6 +1227,9 @@ export class LiveSessionInstance {
     })
 
     this.scheduleQueueBroadcast()
+    if (this.settings.ttsQueueEnabled && this.status === 'running' && !this.isProcessingQueueTts) {
+      this.scheduleNextQueueTts(800)
+    }
     this.onBroadcast('user_added', {
       sessionKey: this.streamKey,
       user: {
@@ -1021,6 +1332,7 @@ export class LiveSessionInstance {
     this.saveToDb()
     this.onBroadcast('settings', { sessionKey: this.streamKey, settings: this.settings })
     this.restartGreetingLoop()
+    this.restartQueueTtsLoop()
   }
 
   public updateConfig(newConfig: Partial<TikTokConfig>) {

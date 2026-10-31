@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell, ipcMain, dialog } from 'electron'
+import { app, BrowserWindow, shell, ipcMain, dialog, Tray, Menu } from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
@@ -34,6 +34,8 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 let win: BrowserWindow | null = null
+let tray: Tray | null = null
+let isQuitting = false
 const musicStates = new Map<string, any>()
 const preload = path.join(__dirname, '../preload/index.mjs')
 const indexHtml = path.join(RENDERER_DIST, 'index.html')
@@ -90,7 +92,19 @@ async function createWindow() {
     // Broadcast to matching OBS overlay via WebSocket
     if (localServer && data?.sessionKey) {
       const sessionKey = data.sessionKey
-      if (event === 'user_added') {
+      if (event === 'stream_event') {
+        localServer.broadcastToKey(sessionKey, {
+          type: 'STREAM_EVENT',
+          event: data.event,
+          timestamp: data.timestamp || Date.now(),
+          user: {
+            ...data.user,
+            photoUrl: data.user?.avatar ? `/api/proxy-img?url=${encodeURIComponent(data.user.avatar)}` : '',
+            avatar: data.user?.avatar ? `/api/proxy-img?url=${encodeURIComponent(data.user.avatar)}` : '',
+          },
+          data: data.data,
+        })
+      } else if (event === 'user_added') {
         localServer.broadcastToKey(sessionKey, {
           type: 'ADD_USER',
           user: {
@@ -171,7 +185,7 @@ async function createWindow() {
 
       if (msg.type === 'CLEAR_QUEUE') {
         session.clearQueue()
-      } else if (msg.type === 'USER_PRINTED' && msg.userId) {
+      } else if ((msg.type === 'USER_COMPLETED' || msg.type === 'USER_PRINTED') && msg.userId) {
         const queue = session.getQueue()
         const found = queue.find(
           (q) => q.unique_id === String(msg.userId) || String(q.id) === String(msg.userId),
@@ -179,6 +193,23 @@ async function createWindow() {
         if (found) {
           session.removeFromQueue(found.id)
         }
+      } else if (msg.type === 'USER_PRINTING' && msg.user) {
+        if (msg.user.isVip) {
+          session.onVipPrinting(msg.user)
+        }
+      } else if (msg.type === 'QUEUE_ADD' && msg.user) {
+        session.addToQueue({
+          uniqueId: msg.user.uniqueId || `tmpl_${Date.now()}`,
+          name: msg.user.name || 'Khán giả',
+          photoUrl: msg.user.avatar || msg.user.photoUrl || '',
+          priority: Number(msg.user.priority) || 50,
+          isVip: !!msg.user.isVip,
+          source: msg.user.source || 'template',
+          comment: msg.user.comment || '',
+          giftName: msg.user.giftName || '',
+        })
+      } else if (msg.type === 'REMOVE_USER' && msg.id) {
+        session.removeFromQueue(Number(msg.id))
       }
     }
   }
@@ -299,7 +330,15 @@ async function createWindow() {
               streamKey: parsed.streamKey || streamKey,
               ...parsed,
             })
-          } else if (parsed.type === 'USER_PRINTING' && parsed.user && win && !win.isDestroyed()) {
+          } else if ((parsed.type === 'USER_ACTIVE' || parsed.type === 'USER_PRINTING') && parsed.user && win && !win.isDestroyed()) {
+            win.webContents.send('session:event', {
+              event: 'user_active',
+              data: {
+                sessionKey: parsed.streamKey || streamKey,
+                user: parsed.user,
+              },
+            })
+            // Backward-compatibility
             win.webContents.send('session:event', {
               event: 'user_printing',
               data: {
@@ -313,13 +352,48 @@ async function createWindow() {
             if (target) {
               target.clearQueue()
             }
-          } else if (parsed.type === 'USER_PRINTED' && parsed.userId) {
+          } else if (parsed.type === 'QUEUE_ADD' && parsed.user) {
+            const currentKey = parsed.streamKey || streamKey
+            const target = tiktokManager?.getSessionByStreamKey(currentKey)
+            if (target) {
+              target.addToQueue({
+                uniqueId: parsed.user.uniqueId || `tmpl_${Date.now()}`,
+                name: parsed.user.name || 'Khán giả',
+                photoUrl: parsed.user.avatar || parsed.user.photoUrl || '',
+                priority: Number(parsed.user.priority) || 50,
+                isVip: !!parsed.user.isVip,
+                source: parsed.user.source || 'template',
+                comment: parsed.user.comment || '',
+                giftName: parsed.user.giftName || '',
+              })
+            }
+          } else if (parsed.type === 'USER_PRINTING' && parsed.user) {
+            const currentKey = parsed.streamKey || streamKey
+            const target = tiktokManager?.getSessionByStreamKey(currentKey)
+            if (target && parsed.user.isVip) {
+              target.onVipPrinting(parsed.user)
+            }
+          } else if (parsed.type === 'REMOVE_USER' && parsed.id) {
+            const currentKey = parsed.streamKey || streamKey
+            const target = tiktokManager?.getSessionByStreamKey(currentKey)
+            if (target) {
+              target.removeFromQueue(Number(parsed.id))
+            }
+          } else if ((parsed.type === 'USER_COMPLETED' || parsed.type === 'USER_PRINTED') && parsed.userId) {
             const currentKey = parsed.streamKey || streamKey
             const target = tiktokManager?.getSessionByStreamKey(currentKey)
             if (target) {
               target.removeFromQueue(parsed.userId)
             }
             if (win && !win.isDestroyed()) {
+              win.webContents.send('session:event', {
+                event: 'user_completed',
+                data: {
+                  sessionKey: currentKey,
+                  userId: parsed.userId,
+                },
+              })
+              // Backward-compatibility
               win.webContents.send('session:event', {
                 event: 'user_printed',
                 data: {
@@ -341,6 +415,13 @@ async function createWindow() {
   } else {
     win.loadFile(indexHtml)
   }
+
+  win.on('close', (event) => {
+    if (!isQuitting) {
+      event.preventDefault()
+      win?.hide()
+    }
+  })
 
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('https:') || url.startsWith('http:')) {
@@ -384,6 +465,9 @@ ipcMain.handle('sessions:update-template', (_, { id, templateId }) => {
   const session = tiktokManager?.getSession(id)
   if (!session) return { success: false }
   session.updateTemplate(templateId)
+  if (aiEngine && templateId) {
+    aiEngine.setActiveTemplate(templateId)
+  }
 
   // Broadcast realtime template change to OBS overlay
   if (localServer) {
@@ -585,6 +669,12 @@ ipcMain.handle('queue:clear', (_, { sessionId }) => {
   return { success: true }
 })
 
+ipcMain.handle('session:simulate-gift', (_, { sessionId, gift }) => {
+  const session = tiktokManager?.getSession(sessionId)
+  if (!session) return { success: false, error: 'Không tìm thấy phiên live' }
+  return session.simulateGift(gift)
+})
+
 // Realtime controls sent to specific OBS overlay
 ipcMain.handle('control:send-action', (_, { streamKey, action, value }) => {
   if (localServer) {
@@ -776,18 +866,68 @@ ipcMain.handle('ai:set-active-template', (_, templateId: string) => {
   return true
 })
 
-app.whenReady().then(createWindow)
+function createTray() {
+  if (tray) return
+  const iconPath = path.join(process.env.VITE_PUBLIC, 'favicon.ico')
+  tray = new Tray(iconPath)
+  tray.setToolTip('TikTok Live Stream Multi-Manager')
+
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: 'Mở ứng dụng',
+      click: () => {
+        if (win) {
+          if (!win.isVisible()) win.show()
+          win.focus()
+        }
+      },
+    },
+    { type: 'separator' },
+    {
+      label: 'Thoát',
+      click: () => {
+        isQuitting = true
+        app.quit()
+      },
+    },
+  ])
+
+  tray.setContextMenu(contextMenu)
+
+  const showWin = () => {
+    if (win) {
+      if (!win.isVisible()) win.show()
+      if (win.isMinimized()) win.restore()
+      win.focus()
+    }
+  }
+
+  tray.on('click', showWin)
+  tray.on('double-click', showWin)
+}
+
+app.whenReady().then(() => {
+  createWindow()
+  createTray()
+})
+
+app.on('before-quit', () => {
+  isQuitting = true
+})
 
 app.on('window-all-closed', () => {
   stopTunnel()
   tiktokManager?.stopAll()
   localServer?.close()
+  tray?.destroy()
+  tray = null
   win = null
   if (process.platform !== 'darwin') app.quit()
 })
 
 app.on('second-instance', () => {
   if (win) {
+    if (!win.isVisible()) win.show()
     if (win.isMinimized()) win.restore()
     win.focus()
   }

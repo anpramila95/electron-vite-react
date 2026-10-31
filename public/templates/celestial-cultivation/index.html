@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Độ Kiếp Phi Thăng - Tu Tiên Thiên Đình</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700;900&family=Noto+Serif+SC:wght@500;700;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="index.css" />
+</head>
+<body class="theme-golden_palace">
+  <!-- Nền Canvas vẽ Mây Tiên, Linh Khí, Thiên Lôi và Vòng Bát Quái -->
+  <canvas id="celestial-canvas"></canvas>
+
+  <!-- Lớp Flash khi nổ Thiên Lôi -->
+  <div id="lightning-flash" class="lightning-flash"></div>
+
+  <!-- Giao diện Overlay chính -->
+  <div id="app-container" class="app-container">
+
+    <!-- TOP BAR: Thanh Mục Tiêu Cộng Đồng (Tụ Linh Trận) & Tiên Đế Chí Tôn -->
+    <header class="top-bar">
+      <!-- 5. Community Goal Bar: Tụ Linh Trận -->
+      <div class="spirit-array-box chinese-frame">
+        <div class="array-header">
+          <span class="array-title">☯️ TỤ LINH ĐẠI TRẬN</span>
+          <span id="turbo-badge" class="turbo-badge hidden">🔥 LINH VŨ X2 TU VI (60s)</span>
+        </div>
+        <div class="progress-track">
+          <div id="goal-progress-bar" class="progress-fill" style="width: 0%;"></div>
+          <span id="goal-progress-text" class="progress-text">0 / 100 Linh Khí</span>
+        </div>
+        <div class="array-sub">Tích đủ Linh Khí từ Quà & Tim để mở Mưa Tiên Đơn toàn cõi!</div>
+      </div>
+
+      <!-- 4. King of the Room: Tiên Đế Chí Tôn -->
+      <div id="emperor-throne" class="emperor-throne chinese-frame">
+        <div class="throne-crown">👑 TIÊN ĐẾ CHÍ TÔN 👑</div>
+        <div class="emperor-content">
+          <div class="emperor-avatar-wrap">
+            <div class="bagua-ring"></div>
+            <img id="emperor-avatar" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='48' fill='%232a1b0e' stroke='%23d4af37' stroke-width='4'/><text x='50' y='62' font-size='36' text-anchor='middle' fill='%23d4af37'>仙</text></svg>" alt="Tiên Đế" />
+          </div>
+          <div class="emperor-info">
+            <div id="emperor-name" class="emperor-name">Ngai Vàng Trống</div>
+            <div id="emperor-title" class="emperor-realm">Tặng quà trấn phái để đăng cơ</div>
+            <div id="emperor-score" class="emperor-diamonds">💎 0 Tiên Ngọc</div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- CENTER STAGE: Đài Sen Độ Kiếp & Bảng Phong Thần -->
+    <main class="center-stage">
+      <!-- Cột trái: Bảng Phong Thần (Top Tu Vi) & Hàng Chờ -->
+      <aside id="left-panel" class="side-panel">
+        <div id="leaderboard-box" class="panel-card chinese-frame">
+          <h3 class="panel-title">📜 BẢNG PHONG THẦN</h3>
+          <ul id="top-users-list" class="ranking-list">
+            <li class="empty-rank">Chưa có đạo hữu đắc đạo...</li>
+          </ul>
+        </div>
+
+        <div class="panel-card chinese-frame queue-card">
+          <h3 class="panel-title">⏳ ĐÀI CHỜ NHẬP ĐỊNH (<span id="queue-count">0</span>)</h3>
+          <div id="waiting-queue" class="queue-list"></div>
+        </div>
+      </aside>
+
+      <!-- Giữa màn hình: Đài Sen Độ Kiếp Chính -->
+      <section class="cultivation-altar">
+        <!-- Banner Thông Báo Đột Phá / Đại Chiêu VIP -->
+        <div id="imperial-decree" class="imperial-decree hidden">
+          <div class="decree-scroll">
+            <span class="decree-prefix">THIÊN ĐẠO CHIẾU CHỈ</span>
+            <h2 id="decree-text">Đạo hữu vừa triệu hồi Cửu Thiên Thần Lôi!</h2>
+          </div>
+        </div>
+
+        <!-- Nhân vật đang tu luyện -->
+        <div id="active-cultivator" class="cultivator-stage">
+          <!-- Vòng Pháp Trận Bát Quái quay phía sau -->
+          <div id="dharma-wheel" class="dharma-wheel"></div>
+
+          <!-- Rồng vàng bay quanh khi VIP -->
+          <div id="dragon-aura" class="dragon-aura hidden">🐉</div>
+
+          <!-- Avatar Đạo Hữu -->
+          <div class="cultivator-avatar-box">
+            <div id="realm-badge" class="realm-badge">Phàm Nhân</div>
+            <img id="active-avatar" class="active-avatar" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120'><circle cx='60' cy='60' r='56' fill='%231a0f0a' stroke='%23f5d061' stroke-width='4'/><text x='60' y='72' font-size='42' text-anchor='middle' fill='%23f5d061'>道</text></svg>" alt="Cultivator" />
+            <div class="lotus-throne">🪷</div>
+          </div>
+
+          <!-- Thông tin Đạo Hữu & Thanh Tu Vi -->
+          <div class="cultivator-status chinese-frame">
+            <div id="active-name" class="cultivator-name">Đang chờ Đạo Hữu...</div>
+            <div id="active-action" class="cultivator-action">Bình luận hoặc Tặng quà để lên Đài Sen!</div>
+            <div class="exp-bar-wrap">
+              <div id="active-exp-bar" class="exp-bar-fill" style="width: 0%;"></div>
+              <span id="active-exp-text" class="exp-bar-label">Tu vi: 0 / 1000</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Cột phải: Pháp Chỉ Truyền Âm (Live Chat) -->
+      <aside id="right-panel" class="side-panel">
+        <div id="chat-box" class="panel-card chinese-frame chat-card">
+          <h3 class="panel-title">💬 TRUYỀN ÂM PHÙ</h3>
+          <div id="chat-messages" class="chat-list"></div>
+        </div>
+      </aside>
+    </main>
+
+    <!-- BOTTOM BAR: 1. Bảng Menu Quà Cố Định (Call-To-Action Overlay) -->
+    <footer class="bottom-bar">
+      <div class="gift-menu-banner chinese-frame">
+        <div class="menu-item tier-chat">
+          <span class="menu-icon">💬</span>
+          <div class="menu-detail">
+            <strong>Bình Luận</strong>
+            <span>Xếp hàng Tu Luyện</span>
+          </div>
+        </div>
+        <div class="menu-divider"></div>
+        <div class="menu-item tier-rose">
+          <span class="menu-icon">🌹</span>
+          <div class="menu-detail">
+            <strong>1 Xu (Hoa Hồng)</strong>
+            <span>Cắt Hàng + Triệu Hồi Thiên Lôi</span>
+          </div>
+        </div>
+        <div class="menu-divider"></div>
+        <div class="menu-item tier-vip">
+          <span class="menu-icon">🧋</span>
+          <div class="menu-detail">
+            <strong>10+ Xu (Tiên Đan)</strong>
+            <span>Kim Long Hộ Thể + Đột Phá VIP</span>
+          </div>
+        </div>
+        <div class="menu-divider"></div>
+        <div class="menu-item tier-supreme">
+          <span class="menu-icon">🚀</span>
+          <div class="menu-detail">
+            <strong>100+ Xu (Thần Khí)</strong>
+            <span>Đăng Cơ Tiên Đế + Nổ Cửu Thiên</span>
+          </div>
+        </div>
+      </div>
+    </footer>
+
+  </div>
+
+  <script src="index.js"></script>
+</body>
+</html>

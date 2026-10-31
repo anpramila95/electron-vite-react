@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Chùa Online — Đi Chùa Lễ Phật</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700;800;900&family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="index.css" />
+  <link rel="stylesheet" href="../../overlay.css" />
+</head>
+<body>
+  <!-- Container màn hình dọc 9:16 chuẩn TikTok Live -->
+  <div id="live-stage">
+    <!-- Canvas vẽ toàn bộ Chánh Điện, Tượng Phật, Phật Tử & Hiệu Ứng -->
+    <canvas id="temple-canvas"></canvas>
+
+    <!-- Lớp UI HUD giống hệt 100% ảnh mẫu -->
+    <div id="temple-hud">
+      <!-- HEADER TRÊN CÙNG -->
+      <div class="hud-header">
+        <h1 class="temple-title">Chùa Online</h1>
+        <div class="temple-sub">
+          <span class="sub-item">
+            <span class="sub-icon">🧘</span>
+            <b id="hud-devotees-count">52</b> phật tử đang lễ
+          </span>
+          <span class="sub-sep">✦</span>
+          <span class="sub-item">
+            <span class="sub-icon">✨</span>
+            Công đức: <b id="hud-total-merit">508</b>
+          </span>
+        </div>
+      </div>
+
+      <!-- BẢNG TẶNG QUÀ ĐỂ... (BÊN TRÁI) -->
+      <div class="gift-guide-box">
+        <div class="guide-title">Tặng quà để...</div>
+        <div class="guide-list">
+          <div class="guide-item">
+            <span class="gift-name">🌹 Hoa hồng</span>
+            <span class="gift-action">🕯️ Thắp nén hương</span>
+          </div>
+          <div class="guide-item">
+            <span class="gift-name">🫰 Tim ngón tay</span>
+            <span class="gift-action">🕯️ Thắp nến</span>
+          </div>
+          <div class="guide-item">
+            <span class="gift-name">💐 Bó hoa</span>
+            <span class="gift-action">🪷 Dâng hoa sen</span>
+          </div>
+          <div class="guide-item">
+            <span class="gift-name">🍩 Bánh donut</span>
+            <span class="gift-action">🔔 Thỉnh chuông</span>
+          </div>
+          <div class="guide-item">
+            <span class="gift-name">🫶 Tay bắn tim</span>
+            <span class="gift-action">🍇 Dâng mâm ngũ quả</span>
+          </div>
+          <div class="guide-item">
+            <span class="gift-name">🐕 Chó Corgi</span>
+            <span class="gift-action">🐟 Phóng sinh cá chép</span>
+          </div>
+          <div class="guide-item">
+            <span class="gift-name">🔫 Súng tiền</span>
+            <span class="gift-action">🏮 Thả hoa đăng</span>
+          </div>
+          <div class="guide-item highlight">
+            <span class="gift-name">🦁 Sư tử</span>
+            <span class="gift-action">🐉 Rồng Vàng hộ pháp</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- BẢNG CÔNG ĐỨC (BÊN PHẢI) -->
+      <div class="leaderboard-box">
+        <div class="lb-title">Bảng Công Đức</div>
+        <div class="lb-list" id="lb-list">
+          <div class="lb-row rank-1">
+            <span class="rank-badge r1">1</span>
+            <span class="dev-name">Đức Thịnh</span>
+            <span class="dev-pts">299</span>
+          </div>
+          <div class="lb-row rank-2">
+            <span class="rank-badge r2">2</span>
+            <span class="dev-name">Bảo Ngọc</span>
+            <span class="dev-pts">99</span>
+          </div>
+          <div class="lb-row rank-3">
+            <span class="rank-badge r3">3</span>
+            <span class="dev-name">Hoàng Long</span>
+            <span class="dev-pts">49</span>
+          </div>
+          <div class="lb-row">
+            <span class="rank-badge">4</span>
+            <span class="dev-name">Lan Phương</span>
+            <span class="dev-pts">20</span>
+          </div>
+          <div class="lb-row">
+            <span class="rank-badge">5</span>
+            <span class="dev-name">Quang Huy</span>
+            <span class="dev-pts">10</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- BANNER DÂNG LỄ & ĐẠI CÔNG ĐỨC (DƯỚI ĐÁY) -->
+      <div class="bottom-banners">
+        <!-- Banner VIP Đại Công Đức -->
+        <div class="banner-vip" id="banner-vip" style="display: none;">
+          <span class="badge-icon">👑</span>
+          <span class="banner-text" id="banner-vip-text">
+            <b>ĐẠI CÔNG ĐỨC</b> ✦ <span id="vip-user">Đức Thịnh</span> tặng 🦁 <b>Sư tử</b> · thỉnh Rồng vàng hộ pháp
+          </span>
+        </div>
+
+        <!-- Banner Cúng Dường Thường -->
+        <div class="banner-gift" id="banner-gift" style="display: none;">
+          <img class="gift-avatar-img" id="gift-avatar-img" src="" alt="avatar" style="display: none;" />
+          <span class="gift-avatar" id="gift-avatar">🧘</span>
+          <span class="banner-text" id="gift-banner-text">
+            <b id="gift-user">Hải Đăng</b> tặng 🌹 <b>Hoa hồng ×3</b> · thắp nén hương
+          </span>
+        </div>
+      </div>
+
+      <!-- NÚT ĐIỀU KHIỂN & ÂM THANH NHỎ GỌN GÓC PHẢI -->
+      <div class="quick-controls">
+        <button id="btn-sound" class="qc-btn" title="Bật/Tắt chuông mõ">🔔</button>
+        <button id="btn-prostrate-all" class="qc-btn" title="Đồng lạy Phật">🙇</button>
+        <button id="btn-bell" class="qc-btn" title="Thỉnh Đại Hồng Chung">📿</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="../../overlay.js"></script>
+  <script src="index.js"></script>
+</body>
+</html>

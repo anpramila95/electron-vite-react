@@ -1,0 +1,358 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  user-select: none;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #080402;
+  font-family: 'Be Vietnam Pro', system-ui, -apple-system, sans-serif;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ==================== MÀN HÌNH DỌC 9:16 CHUẨN LIVE STREAM ==================== */
+#live-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  max-width: 540px;
+  max-height: 960px;
+  aspect-ratio: 9 / 16;
+  background: #140a04;
+  overflow: hidden;
+  box-shadow: 0 0 50px rgba(0, 0, 0, 0.85);
+}
+
+@media (max-width: 600px) {
+  #live-stage {
+    max-width: 100vw;
+    max-height: 100vh;
+    aspect-ratio: auto;
+  }
+}
+
+#temple-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  z-index: 1;
+}
+
+/* ==================== HUD OVERLAY ==================== */
+#temple-hud {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 16px 14px 20px 14px;
+}
+
+#temple-hud * {
+  pointer-events: auto;
+}
+
+/* ==================== HEADER TRÊN CÙNG ==================== */
+.hud-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  margin-top: 8px;
+  background: radial-gradient(ellipse at center, rgba(30, 16, 8, 0.65) 0%, transparent 80%);
+  padding: 6px 12px;
+}
+
+.temple-title {
+  font-family: 'Cinzel', serif;
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #fef08a;
+  background: linear-gradient(180deg, #fffbeb 0%, #fde047 50%, #ca8a04 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  text-shadow: 0 2px 14px rgba(234, 179, 8, 0.5);
+  line-height: 1.1;
+}
+
+.temple-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fef3c7;
+  margin-top: 4px;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.8);
+}
+
+.sub-item b {
+  color: #facc15;
+  font-weight: 800;
+}
+
+.sub-sep {
+  color: #ca8a04;
+  font-size: 8px;
+}
+
+/* ==================== BẢNG TẶNG QUÀ ĐỂ... (BÊN TRÁI) ==================== */
+.gift-guide-box {
+  position: absolute;
+  top: 72px;
+  left: 12px;
+  width: 146px;
+  background: rgba(26, 14, 8, 0.78);
+  border: 1px solid rgba(234, 179, 8, 0.38);
+  border-radius: 12px;
+  padding: 7px 8px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.55), inset 0 0 12px rgba(234, 179, 8, 0.08);
+  backdrop-filter: blur(8px);
+}
+
+.guide-title {
+  font-size: 11px;
+  font-weight: 800;
+  color: #fde047;
+  letter-spacing: 0.02em;
+  margin-bottom: 5px;
+  border-bottom: 1px solid rgba(234, 179, 8, 0.25);
+  padding-bottom: 3px;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
+}
+
+.guide-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3.5px;
+}
+
+.guide-item {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+
+.gift-name {
+  font-size: 9.5px;
+  font-weight: 700;
+  color: #fffbeb;
+}
+
+.gift-action {
+  font-size: 8.5px;
+  font-weight: 500;
+  color: #fef08a;
+  opacity: 0.9;
+  padding-left: 2px;
+}
+
+.guide-item.highlight .gift-name {
+  color: #facc15;
+}
+
+.guide-item.highlight .gift-action {
+  color: #f59e0b;
+  font-weight: 700;
+}
+
+/* ==================== BẢNG CÔNG ĐỨC (BÊN PHẢI) ==================== */
+.leaderboard-box {
+  position: absolute;
+  top: 72px;
+  right: 12px;
+  width: 136px;
+  background: rgba(26, 14, 8, 0.78);
+  border: 1px solid rgba(234, 179, 8, 0.38);
+  border-radius: 12px;
+  padding: 7px 8px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.55), inset 0 0 12px rgba(234, 179, 8, 0.08);
+  backdrop-filter: blur(8px);
+}
+
+.lb-title {
+  font-size: 11px;
+  font-weight: 800;
+  color: #fde047;
+  letter-spacing: 0.02em;
+  margin-bottom: 5px;
+  border-bottom: 1px solid rgba(234, 179, 8, 0.25);
+  padding-bottom: 3px;
+  text-align: center;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
+}
+
+.lb-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.lb-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  padding: 1.5px 0;
+}
+
+.rank-badge {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+  font-size: 8.5px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.rank-badge.r1 {
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: #261505;
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.6);
+}
+
+.rank-badge.r2 {
+  background: linear-gradient(135deg, #e2e8f0, #94a3b8);
+  color: #1e293b;
+}
+
+.rank-badge.r3 {
+  background: linear-gradient(135deg, #d97706, #92400e);
+  color: #fff;
+}
+
+.dev-name {
+  flex: 1;
+  color: #fffdf5;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dev-pts {
+  color: #fde047;
+  font-weight: 800;
+  font-family: 'Space Grotesk', sans-serif;
+}
+
+/* ==================== BANNER VINH DANH DƯỚI ĐÁY ==================== */
+.bottom-banners {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.banner-vip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: linear-gradient(90deg, rgba(88, 38, 16, 0.95) 0%, rgba(56, 24, 10, 0.92) 100%);
+  border: 1.2px solid #facc15;
+  border-radius: 999px;
+  padding: 5px 12px;
+  box-shadow: 0 0 16px rgba(234, 179, 8, 0.45);
+  font-size: 10px;
+  color: #fffdf5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  animation: slideInUp 0.5s ease;
+}
+
+.banner-vip b {
+  color: #fde047;
+}
+
+.badge-icon {
+  font-size: 14px;
+}
+
+.gift-avatar-img {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid #facc15;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.gift-avatar {
+  font-size: 14px;
+}
+
+.banner-gift {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: rgba(38, 20, 12, 0.88);
+  border: 1px solid rgba(234, 179, 8, 0.35);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 10px;
+  color: #fffdf5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.banner-gift b {
+  color: #fde047;
+}
+
+@keyframes slideInUp {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+/* ==================== QUICK CONTROLS ==================== */
+.quick-controls {
+  position: absolute;
+  bottom: 84px;
+  right: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 20;
+}
+
+.qc-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: rgba(30, 16, 8, 0.85);
+  border: 1px solid rgba(234, 179, 8, 0.45);
+  color: #fef08a;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  transition: all 0.2s;
+}
+
+.qc-btn:hover {
+  background: rgba(234, 179, 8, 0.25);
+  transform: scale(1.08);
+}

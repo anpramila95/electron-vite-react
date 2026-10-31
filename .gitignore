@@ -34,4 +34,5 @@ yarn.lock
 
 test/screenshots
 
+live-stream*
 live-stream.sqlite
